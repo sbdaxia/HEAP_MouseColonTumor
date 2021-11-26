@@ -1,0 +1,85 @@
+---
+title: "Correlation between gene counts outside of peaks and IC gene counnts"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+# Library set-up
+```{r message=FALSE, warning=FALSE}
+options(connectionObserver = NULL)
+
+library(CLIPanalyze)
+library(tidyverse)
+library(GenomicRanges)
+library(Rsubread)
+library(data.table)
+library(rtracklayer)
+library(Rsamtools)
+library(DESeq2)
+library(ensembldb)
+library(EnsDb.Mmusculus.v79)
+library(org.Mm.eg.db)
+library(ggplot2)
+library(AnnotationDbi)
+library(reshape)
+library(DEGreport)
+```
+
+# Purpose
+Lorena suggested that checking the correlation between gene counts outside of peaks from the HEAP library and IC gene counts should give us a good idea as to whether the binding of RNA to resin is random as we assumed. 
+
+# Load data
+```{r}
+load("merged_peak_analysis.rda")
+```
+
+# Check correlation
+```{r}
+plotMA(dds.genes,
+       main = "MA plot for all HEAP vs IC\n in genes outside peaks")
+
+summary(results(dds.genes))
+
+
+norm.count <- counts(dds.genes, normalize = TRUE)
+
+heap.count <- norm.count[, c(paste0("HVA", seq(1:6)), paste0("HVAK", seq(1:6)))]
+ic.count <- norm.count[, c(paste0("HVA", seq(1:6), "-input"), paste0("HVAK", seq(1:6), "-input"))]
+
+heap.rowmean <- rowMeans(heap.count)
+summary(heap.rowmean)
+
+ic.rowmean <- rowMeans(ic.count)
+summary(ic.rowmean)
+
+mean.count <- cbind(heap.rowmean, ic.rowmean) %>% as.data.frame()
+
+
+ggplot(mean.count, aes(x = heap.rowmean, y = ic.rowmean)) +
+  geom_point(data = mean.count, alpha = 0.5, size = 1, color = "black") +
+  xlab("HEAP counts in gene outside of peaks") + ylab("IC counts in gene outside of peaks") + 
+  labs(title = "Correlation between HEAP and IC counts in genes outside of peaks") + xlim(0,20) + ylim(0,15)
+
+
+# Correlation test
+cor.test(mean.count$heap.rowmean, mean.count$ic.rowmean, method = "spearman")
+```
+
+# Examine sizeFactor calculation
+```{r}
+heap.raw <- counts(dds.genes)[, c(paste0("HVA", seq(1:6)), paste0("HVAK", seq(1:6)))]
+ic.raw <- counts(dds.genes)[, c(paste0("HVA", seq(1:6), "-input"), paste0("HVAK", seq(1:6), "-input"))]
+
+degCheckFactors(heap.raw) + ggtitle("HEAP")
+degCheckFactors(ic.raw) + ggtitle("Input Control")
+
+```
+
+# Session Info
+```{r}
+sessionInfo()
+```

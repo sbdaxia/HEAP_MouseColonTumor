@@ -1,0 +1,482 @@
+---
+title: "Merged peak motif analysis"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library Loading for the analysis
+```{r message=FALSE, warning=FALSE}
+library(data.table)
+library(tidyverse)
+library(rtracklayer)
+library(Rsamtools)
+library(DESeq2)
+library(Rsubread)
+library(CLIPanalyze)
+library(RColorBrewer)
+library(gplots)
+library(Biostrings)
+library(rvest)
+library(ggseqlogo)
+library(grid)
+library(gridExtra)
+```
+
+## Load the joint_analysis filtered peak dataset
+```{r}
+dir.create("PDF_figure/Merged_peak_motif_analysis", showWarnings = FALSE)
+
+all.peaks <- readRDS("../Merged_Analysis/peaks-merged.rds")
+filter.peaks <- readRDS("Datafiles/merged-peaks-filtered-09282019.rds")
+```
+
+## HVA-upregulated peaks
+```{r}
+## subset peaks up-regualted in HVA samples
+padj.threshold <- 0.05
+hva.up.peaks <- subset(filter.peaks, hvak.hva.log2FC < 0 & hvak.hva.padj < padj.threshold)
+```
+
+### Kmer enrichment
+Load miRBase mature miRNA fa file and mm10 genome
+
+```{r}
+mirnas <- readRNAStringSet("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/mature.fa")
+mirnas <- DNAStringSet(mirnas[grepl("mmu-", names(mirnas))])
+names(mirnas) <- sapply(strsplit(names(mirnas), " "), "[", 1)
+names(mirnas) <- substring(names(mirnas), first = 5)
+bsgenome <- load.bsgenome("mm10")
+```
+
+Now we look for enriched 6mers/7mers/8mers in HEAP peaks.
+
+```{r prepare functions}
+#' Find all miRNA sequences associated with the k-mer
+#' 
+#' Find all miRNA mature sequences where a reverse complement to the k-mer
+#' matches exactly somewhere within the sequence.
+#' 
+#' @param kmer A single k-mer to search for.
+#' @param mirnas DNAStringSet with mnature miRNA sequences (with miRNA names).
+#' @param in.seed Logical. If TRUE, only associate with miRNAs where k-mer
+#'        occurs in the seed, i.e., within 1st to 8th nt.
+#' @param collapse Logical. If TRUE, collapse all output miRNA names and
+#'        separate by ",".
+#' @return Vector of names of miRNAs associated with the k-mer, or a collapsed
+#'         string of names.
+
+# define functions
+associateKmerWithMiRNA <- function(kmer, mirnas, in.seed = TRUE,
+                                   collapse = TRUE) {
+  occurrences <- unlist(vmatchPattern(reverseComplement(DNAString(kmer)),
+                                      mirnas))
+  if (in.seed) {
+    occurrences <- occurrences[end(occurrences) <= 8]
+  }
+  mirna.names <- sort(names(occurrences))
+  if (collapse) {
+    mirna.names <- paste0(mirna.names, collapse = ",")
+  }
+  return(mirna.names)
+}
+
+findEnrichedKmersPeaks <- function(peaks, kmer.background, k = 6, n = 50) {
+  enriched.kmers <- findKmerEnrich(peaks, k = k, genomeTag = "mm10",
+                                   kmer.background = kmer.background)[1:n]
+  enriched.kmers <-
+    data.table(kmer = names(enriched.kmers),
+               enrich = enriched.kmers,
+               miR = sapply(names(enriched.kmers),
+                            associateKmerWithMiRNA, mirnas = mirnas))
+  enriched.kmers
+}
+```
+
+```{r warning=FALSE}
+# establish proper background
+# for the overlapping peaks, background is all peaks detected in HVA and HVAK samples, disregarding padj
+# calculate all the kmer backgrounds
+k6.background.overlap <- calculateKmerBackground(k=6, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+k7.background.overlap <- calculateKmerBackground(k=7, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+k8.background.overlap <- calculateKmerBackground(k=8, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+
+# 6mer
+hva.up.peaks.k6 <- findEnrichedKmersPeaks(hva.up.peaks, k6.background.overlap, k=6)
+ggplot(hva.up.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in HVA up-regulated peaks")
+
+hva.up.peaks.k6[1:10,]
+
+# 7mer
+hva.up.peaks.k7 <- findEnrichedKmersPeaks(hva.up.peaks, k7.background.overlap, k=7)
+ggplot(hva.up.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in HVA up-regulated peaks")
+
+hva.up.peaks.k7[1:10,]
+
+# 8mer
+hva.up.peaks.k8 <- findEnrichedKmersPeaks(hva.up.peaks, k8.background.overlap, k=8)
+ggplot(hva.up.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in HVA up-regulated peaks")
+
+hva.up.peaks.k8[1:10,]
+```
+
+### HOMER
+#### Function set-up
+```{r}
+findKmerWindows <- function(kmers, peaks,
+                            peaks.seq) {
+    sapply(kmers,
+           function(kmer) {
+               positions <- findKmerPositions(gr.seq = peaks.seq, kmer = kmer)
+               positions <- mapPositionsToGenome(positions, peaks)
+               positions
+           },
+           simplify = FALSE)
+}
+
+print.miRNA.Motif.HOMER <- function(mirna.table, file, score = 6) {
+    # write motif to file according to HOMER format
+    tmp <- apply(mirna.table, 1, function(x) {
+        mirna.id <- x["MiRBase.ID"]
+        mirna.family <- x["miR.family"]
+        mirna.seq <- x["seed"]
+        mirna.name <- sprintf("%s (%s)", mirna.family, mirna.id)
+        mirna.seq.df <- as.data.frame(strsplit(mirna.seq, "")[[1]])
+        colnames(mirna.seq.df) <- "char"
+        mirna.seq.df$A <- ifelse(mirna.seq.df$char == "A", 0.997, 0.001)
+        mirna.seq.df$C <- ifelse(mirna.seq.df$char == "C", 0.997, 0.001)
+        mirna.seq.df$G <- ifelse(mirna.seq.df$char == "G", 0.997, 0.001)
+        mirna.seq.df$T <- ifelse(mirna.seq.df$char == "T", 0.997, 0.001)
+        mirna.seq.mat <- as.matrix(mirna.seq.df[2:5])
+        write(sprintf(">%s\t%s\t%s", mirna.seq, mirna.name, score), file,
+              append = TRUE)
+        write.table(format(mirna.seq.mat, digits = 4), file, sep = "\t",
+                    quote = FALSE, row.names = FALSE, col.names = FALSE,
+                    append = TRUE)
+    })
+}
+
+prepareHOMERinput <- function(kmer.results, peaks, peaks.seq, filename.tag,
+                              n.kmers = 50, width = 15) {
+    kmer.positions <- findKmerWindows(kmer.results[1:n.kmers, kmer], peaks = peaks, peaks.seq = peaks.seq)
+    kmer.positions <- unlist(GRangesList(kmer.positions))
+    kmer.positions <- resize(kmer.positions, fix = "center", width = width)
+    kmer.positions <- GenomicRanges::reduce(kmer.positions)
+    kmer.positions.filename <-
+        sprintf("Kmer/%s-peaks-k7-windows.bed", filename.tag)
+    rtracklayer::export(kmer.positions, kmer.positions.filename)
+    print("info on k-mer positions (count and width distribution):")
+    print(length(kmer.positions))
+    print(summary(width(kmer.positions)))
+    
+    kmer.background <-
+        c(shift(kmer.positions, 100),
+          shift(kmer.positions, 200),
+          shift(kmer.positions, -100),
+          shift(kmer.positions, -200))
+    kmer.background <- GenomicRanges::reduce(kmer.background)
+    kmer.background <- kmer.background[kmer.background %outside% peaks]
+    print("info on background positions (count and width distribution):")
+    print(length(kmer.background))
+    print(summary(width(kmer.background)))
+    kmer.background.filename <-
+        sprintf("Kmer//%s-peaks-k7-windows-background.bed",
+                filename.tag)
+    rtracklayer::export(kmer.background, kmer.background.filename)
+}
+
+plotHomerResults <- function(homer.table, homer.pwms, n.motifs = 20) {
+    ncol <- 4
+    laymat <- matrix(1:((1 + n.motifs) * ncol), ncol = ncol, byrow = FALSE)
+    logos.list <- lapply(homer.pwms[1:n.motifs],
+                         function(pwm) {
+                             ggseqlogo(pwm) +
+                                 theme(axis.text.x = element_blank(),
+                                       axis.title.y = element_blank(),
+                                       axis.line.y =
+                                           element_line(color = "gray"),
+                                       axis.ticks.y =
+                                           element_line(color = "gray")) +
+                                 ylim(0, 2)
+                         })
+    ranks.text <- sapply(homer.table$Rank[1:n.motifs], textGrob,
+                         simplify = FALSE)
+    pval.text <- sapply(sprintf("%.0f", -homer.table$log10.p)[1:n.motifs],
+                        textGrob, simplify = FALSE)
+    targ.text <- sapply(homer.table$freq.targets[1:n.motifs], textGrob,
+                        simplify = FALSE)
+    bg.text <- sapply(homer.table$freq.bg[1:n.motifs], textGrob,
+                      simplify = FALSE)
+    tf.text <- sapply(homer.table$best.match.simple[1:n.motifs], textGrob,
+                      simplify = FALSE)
+    headers <- sapply(c("rank", "motif", "-log10\np-value",
+                        "freq.\ntargets", "freq.\nbackgr.",
+                        "best match"),
+                      textGrob,
+                      simplify = FALSE)
+    all.plots <- c(headers[1], ranks.text,
+                   headers[2], logos.list,
+                   headers[3], pval.text,
+                   # headers[4], targ.text,
+                   # headers[5], bg.text,
+                   headers[6], tf.text)
+    grid.arrange(grobs = all.plots, layout_matrix = laymat,
+                 # widths = c(1, 4, 1, 1, 1, 3),
+                 widths = c(1, 4, 1, 3),
+                 ncol = ncol)
+}
+
+loadPWM <- function(filename) {
+    motif <- fread(filename, skip = 1)
+    if (nrow(motif) > 0) {
+        pwm <- t(as.matrix(as.data.frame(motif)))
+        rownames(pwm) <- c("A", "C", "G", "U")
+        pwm
+    } else {
+        NULL
+    }
+}
+
+loadHomerResults <- function(dirname) {
+    # also allow version="extended" for motifs without stringent
+    #   similarity filtering
+    homer.table <-
+        html_nodes(read_html(sprintf("%s/homerResults.html", dirname)), "table")
+    homer.table <- html_table(homer.table, header = TRUE)[[1]]
+    homer.table <- data.table(homer.table, check.names = TRUE)
+    homer.table <- homer.table[, .(Rank,
+                                   log10.p = log.P.pvalue / log(10),
+                                   freq.targets = X..of.Targets,
+                                   freq.bg = X..of.Background,
+                                   best.match = Best.Match.Details)]
+    homer.table[, filename := sprintf("%s/homerResults/motif%s.motif",
+                                      dirname, seq_along(Rank))]
+    homer.pwms <- sapply(homer.table$filename, loadPWM, simplify = FALSE)
+    list(homer.table, homer.pwms)
+}
+```
+
+#### Run
+```{r fig.height=7, fig.width=6, warning=FALSE}
+hva.up.peaks.seq <- get.seqs(bsgenome, hva.up.peaks)
+
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hva.up.peaks.k7, 
+                  peaks = hva.up.peaks, 
+                  peaks.seq = hva.up.peaks.seq,
+                  filename.tag = "merged.hva.up",
+                  n.kmers = 50,
+                  width = 15)
+
+genomic.regions <- "Kmer/merged.hva.up-peaks-k7-windows.bed"
+background.regions <- "Kmer/merged.hva.up-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-merged.hva.up-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+
+print(homer.cmd)
+
+hva.up.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hva.up.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("miR-130b", "miR-4768", "miR-31", "miR-4469", "miR-4309")
+hva.up.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hva.up.peaks.homer.res[[1]],
+                 hva.up.peaks.homer.res[[2]], n.motifs = 5)
+
+pdf("PDF_figure/Merged_peak_motif_analysis/HOMER_HVA_upregulated.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(hva.up.peaks.homer.res[[1]],
+                 hva.up.peaks.homer.res[[2]], n.motifs = 5)
+dev.off()
+```
+
+## HVAK-upregulated peaks
+```{r}
+hvak.up.peaks <- subset(filter.peaks, hvak.hva.log2FC > 0 & hvak.hva.padj < padj.threshold)
+```
+
+### Kmer enrichment
+```{r warning=FALSE}
+# 6mer
+hvak.up.peaks.k6 <- findEnrichedKmersPeaks(hvak.up.peaks, k6.background.overlap, k=6)
+ggplot(hvak.up.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in HVAK up-regulated peaks")
+
+hvak.up.peaks.k6[1:10,]
+
+# 7mer
+hvak.up.peaks.k7 <- findEnrichedKmersPeaks(hvak.up.peaks, k7.background.overlap, k=7)
+ggplot(hvak.up.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in HVAK up-regulated peaks")
+
+hvak.up.peaks.k7[1:10,]
+
+# 8mer
+hvak.up.peaks.k8 <- findEnrichedKmersPeaks(hvak.up.peaks, k8.background.overlap, k=8)
+ggplot(hvak.up.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in HVAK up-regulated peaks")
+
+hvak.up.peaks.k8[1:10,]
+```
+
+### HOMER
+```{r fig.height=10, fig.width=6, warning=FALSE}
+hvak.up.peaks.seq <- get.seqs(bsgenome, hvak.up.peaks)
+
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hvak.up.peaks.k7, 
+                  peaks = hvak.up.peaks, 
+                  peaks.seq = hvak.up.peaks.seq,
+                  filename.tag = "merged.hvak.up",
+                  n.kmers = 50,
+                  width = 15)
+
+genomic.regions <- "Kmer/merged.hvak.up-peaks-k7-windows.bed"
+background.regions <- "Kmer/merged.hvak.up-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-merged.hvak.up-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+
+print(homer.cmd)
+
+hvak.up.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hvak.up.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("miR-27a/b", "miR-15/16/195/322/497", "let-7/miR-98", "miR-24", "miR-4707", "miR-17/20/93/106", "miR-193-3p", "hsa-miR-7-1", "miR-3941")
+hvak.up.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hvak.up.peaks.homer.res[[1]],
+                 hvak.up.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/Merged_peak_motif_analysis/HOMER_HVAK_upregulated.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(hvak.up.peaks.homer.res[[1]],
+                 hvak.up.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+## Merged peaks
+### Kmer enrichment
+```{r warning=FALSE}
+# 6mer
+merged.peaks.k6 <- findEnrichedKmersPeaks(filter.peaks, k6.background.overlap, k=6)
+ggplot(merged.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in all merged peaks")
+
+merged.peaks.k6[1:10,]
+
+# 7mer
+merged.peaks.k7 <- findEnrichedKmersPeaks(filter.peaks, k7.background.overlap, k=7)
+ggplot(merged.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in all merged peaks")
+
+merged.peaks.k7[1:10,]
+
+# 8mer
+merged.peaks.k8 <- findEnrichedKmersPeaks(filter.peaks, k8.background.overlap, k=8)
+ggplot(merged.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in all merged peaks")
+
+merged.peaks.k8[1:10,]
+```
+
+### HOMER
+```{r fig.height=10, fig.width=6, warning=FALSE}
+merged.peaks.seq <- get.seqs(bsgenome, filter.peaks)
+
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = merged.peaks.k7, 
+                  peaks = filter.peaks, 
+                  peaks.seq = merged.peaks.seq,
+                  filename.tag = "merged.all",
+                  n.kmers = 50,
+                  width = 15)
+
+genomic.regions <- "Kmer/merged.all-peaks-k7-windows.bed"
+background.regions <- "Kmer/merged.all-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-merged.all-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+
+print(homer.cmd)
+
+merged.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(merged.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-29", "miR-17/20/93/106/519/526", "miR-200/429", "miR-194", "miR-24","miR-25/32/92/363/367", "miR-26", "miR-19", "hsa-miR-3183", "hsa-miR-603", "miR-147b/210", "hsa-miR-4661-5p")
+merged.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(merged.peaks.homer.res[[1]],
+                 merged.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/Merged_peak_motif_analysis/HOMER_merged.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(merged.peaks.homer.res[[1]],
+                 merged.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+## SessionInfo
+```{r}
+sessionInfo()
+```

@@ -1,0 +1,157 @@
+---
+title: "Peak heatmap"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prepare libraies
+```{r}
+suppressMessages(
+suppressWarnings(
+  c(library(data.table),
+    library(tidyverse),
+    library(rtracklayer),
+    library(DESeq2),
+    library(Biostrings),
+    library(genomation),
+    library(RColorBrewer),
+    library(CLIPanalyze))
+  )
+)
+```
+## Load miR-peaks dataset
+```{r}
+mirs.peaks <- readRDS("Datafiles/miRNA-peaks-list-09282019.rds")
+```
+
+## Analysis
+Prepare bw file for visualization
+```{bash eval = F}
+# combine bigwig files of the same genotype
+$ bigWigMerge Exp-HVA1_LIB041590_GEN00154971_R1_barcode.uniq.bw Exp-HVA2_LIB041590_GEN00154974_R1_barcode.uniq.bw Exp-HVA3_LIB041590_GEN00154977_R1_barcode.uniq.bw Exp-HVA4_LIB043893_GEN00166439_R1_barcode.uniq.bw Exp-HVA5_LIB043893_GEN00166442_R1_barcode.uniq.bw Exp-HVA6_LIB043893_GEN00166445_R1_barcode.uniq.bw HVA_merged.bedGraph
+
+$ bigWigMerge Exp-HVAK1_LIB041590_GEN00154980_R1_barcode.uniq.bw Exp-HVAK2_LIB041590_GEN00154983_R1_barcode.uniq.bw Exp-HVAK3_LIB041590_GEN00154986_R1_barcode.uniq.bw Exp-HVAK4_LIB043893_GEN00166448_R1_barcode.uniq.bw Exp-HVAK5_LIB043893_GEN00166451_R1_barcode.uniq.bw Exp-HVAK6_LIB043893_GEN00166454_R1_barcode.uniq.bw HVAK_merged.bedGraph
+```
+
+convert chromosome name from Ensembl to UCSC format.
+```{r eval = F}
+chromosomename <- read.table("../joint_analysis/mm10.chrom.sizes.txt", sep = "\t")[,1][1:22]
+hva_bed <- read.table("../joint_analysis/HVA_merged.bedGraph", sep = "\t")
+hva_bed <- hva_bed %>% filter(V1 %in% chromosomename)
+hva_bed$V1 <- paste0("chr", hva_bed$V1)
+hva_bed$V1[hva_bed$V1 == "chrMT"] <- "chrM"
+write_delim(hva_bed, file = "../joint_analysis/HVA_merged_edited.bedGraph", delim = "\t", col_names = F)
+
+hvak_bed <- read.table("../joint_analysis/HVAK_merged.bedGraph", sep = "\t")
+hvak_bed <- hvak_bed %>% filter(V1 %in% chromosomename)
+hvak_bed$V1 <- paste0("chr", hvak_bed$V1)
+hvak_bed$V1[hvak_bed$V1 == "chrMT"] <- "chrM"
+write_delim(hvak_bed, file = "../joint_analysis/HVAK_merged_edited.bedGraph", delim = "\t", col_names = F)
+
+```
+
+```{bash eval = F}
+# bedGraph to bigWig conversion
+$ awk 'NR!=1' HVA_merged_edited.bedGraph > input.HVA_merged.bedGraph
+$ sort -k1,1 -k2,2n input.HVA_merged.bedGraph > sorted.input.HVA_merged.bedGraph
+$ bedGraphToBigWig sorted.input.HVA_merged.bedGraph mm10.chrom.sizes HVA_merged.bw
+
+$ awk 'NR!=1' HVAK_merged_edited.bedGraph > input.HVAK_merged.bedGraph
+$ sort -k1,1 -k2,2n input.HVAK_merged.bedGraph > sorted.input.HVAK_merged.bedGraph
+$ bedGraphToBigWig sorted.input.HVAK_merged.bedGraph mm10.chrom.sizes HVAK_merged.bw
+```
+
+```{r}
+peaks <- mirs.peaks
+peaks <- lapply(peaks, FUN = function(x) {x[order(x$count, decreasing = T)]})
+peaks <- lapply(peaks, FUN = function(x) {x[x$padj<=0.01]})
+mybw.dir <- "../joint_analysis"
+mybw.files <- list.files(mybw.dir, pattern = "bw$", full.names = T)[13:14]
+print(mybw.files)
+
+cols <- brewer.pal(name = "Set2", n = 8)
+reds <- brewer.pal(name = "Reds", n = 9)
+blues <- brewer.pal(name = "Blues", n = 9)
+mycolors <-c(blues[6], reds[6]) #HVA, HVAK
+light.colors <- alpha(c(blues[3], reds[2]), 0.4)
+```
+
+### Histogram
+histogram plot function
+```{r}
+#plot histograms
+peaks_meta <- function(mypeaks = peaks, 
+                       miRNA_family = "miR-451a", 
+                       dispersion = "se",
+                       dispersion.col = NULL,
+                       coordinates = c(-400, 400), 
+                       line.col = mycolors, 
+                       winsorize = c(0,99),
+                       title = ""){
+  
+  suppressWarnings(mypeaks <- lapply(mypeaks, FUN = function(x) {resize(x, width = sum(abs(coordinates)), fix="center")}))
+  mypeaks <- GRangesList(mypeaks)
+  mysml <- ScoreMatrixList(targets=mybw.files, window=mypeaks[[miRNA_family]], type = "bigWig", strand.aware = T)
+  mysampleInfo <- data.frame(basename(mybw.files), c("HVA", "HVAK"))
+  names(mysampleInfo) = c("sample", "genotype")
+  names(mysml) = mysampleInfo$genotype[match(names(mysml), mysampleInfo$sample)]
+  plotMeta(mysml, profile.names = c("HVA", "HVAK"), xcoords = coordinates, dispersion = dispersion, main =title, line.col = line.col, winsorize = winsorize, dispersion.col = dispersion.col)
+}
+```
+
+```{r}
+len <- sapply(mirs.peaks, function(x) length(x))
+mirs.peaks <- mirs.peaks[order(-len)]
+mirna <- names(mirs.peaks)
+
+for (i in 1:10) {
+  peaks_meta(mypeaks = peaks, dispersion  = NULL, miRNA_family = mirna[i], title = mirna[i])
+  peaks_meta(mypeaks = peaks, dispersion  = "se", miRNA_family = mirna[i], title = mirna[i],
+           dispersion.col = light.colors)
+}
+```
+
+### Heatmap
+plot heatmaps
+```{r}
+peaks_heat <- function(mypeaks = peaks, 
+                       miRNA_family = "miR-451", 
+                       col = blues9, 
+                       coordinates = c(-400, 400), 
+                       order_rows = F, 
+                       winsorize_parameters = c(1,98)){
+  suppressWarnings(mypeaks <- lapply(mypeaks, FUN = function(x) {resize(x, width = sum(abs(coordinates)), fix="center")}))
+  mypeaks <- GRangesList(mypeaks)
+  mysml <- ScoreMatrixList(targets=mybw.files[c(1,2)], window=mypeaks[[miRNA_family]], type = "bigWig", strand.aware = T)
+  mysampleInfo <- data.frame(basename(mybw.files), c("HVA", "HVAK"))
+  names(mysampleInfo) = c("sample", "genotype")
+  names(mysml) = paste(mysampleInfo$genotype[match(names(mysml), mysampleInfo$sample)], miRNA_family , sep = "_")
+  mysml.scaled = scaleScoreMatrixList(mysml)
+  #multiHeatMatrix(mysml.scaled, xcoords = coordinates, col = col)
+  multiHeatMatrix(mysml, common.scale = T, xcoords = coordinates, winsorize = winsorize_parameters, col = col, order = order_rows)
+}
+```
+
+```{r}
+colfunc <- colorRampPalette(c("white", "blue"))
+mycols <- colfunc(128)
+```
+
+```{r fig.height=8, fig.width=8}
+for (i in 1:10) {
+  peaks_heat(mypeaks = peaks, miRNA_family = mirna[i], col = blues9, winsorize_parameters = c(0,99))
+}
+```
+
+### SessionInfo
+```{r}
+sessionInfo()
+```

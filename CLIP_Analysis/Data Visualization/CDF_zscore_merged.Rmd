@@ -1,0 +1,211 @@
+---
+title: "CDF_zscore using merged peaks"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prepare libraries
+```{r results='hide', message=FALSE, warning=FALSE}
+library(tidyverse)
+library(data.table)
+library(gdata)
+library(CLIPanalyze)
+library(BSgenome)
+library(VennDiagram)
+library(ggplot2)
+library(biomaRt)
+library(RColorBrewer)
+```
+
+## Load RNA-Seq data
+```{r}
+dir.create("PDF_figure/CDF_zscore_merged", showWarnings = FALSE)
+
+DGE <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/RNA-Seq/Mouse colon tumor/4-OHT enema model/Analysis/Differential Analysis_filtered.csv")
+colnames(DGE)[1] <- "EnsemblID"
+```
+
+## Load proteomics data
+```{r}
+DGE_pro <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/Proteomics data/colon tumor-enema model/crcMS_diff.csv")
+colnames(DGE_pro)[2] <- "UniprotID"
+```
+
+## Load miR-target list
+```{r}
+mir.targets <- readRDS("Datafiles/miRNA-merged-peaks-list-09282019-withIDs.rds")
+```
+
+
+## Z-score calculation
+### RNA
+Compute GSEA z-scores using the PAGE method
+```{r}
+zscore.cal <- function(genes = NA, index = NA, expression.dataset){
+  if (sum(!is.na(genes)) > 0 && is.na(index)){
+    gene.set <- expression.dataset[expression.dataset$EnsemblID %in% genes,]
+  } else if (!is.na(index)) {
+    gene.set <- expression.dataset[index,]
+  } else {
+    print("Please input gene names or row index.")
+  }
+  mu <- mean(expression.dataset$log2FoldChange)
+  Sm <- mean(gene.set$log2FoldChange)
+  m <- length(genes)
+  SD <- sd(expression.dataset$log2FoldChange)
+  z <- (Sm-mu)*sqrt(m)/SD
+  return(z)
+}
+```
+
+```{r}
+zscores.all <- as.data.frame(sapply(mir.targets,
+                              function(targets){
+                                  zscore.cal(genes = targets$target_Ensembl_ID, expression.dataset = DGE)
+                            }))
+colnames(zscores.all) <- c("z.score")
+lens <- as.data.frame(sapply(mir.targets, function(x) length(x)))
+colnames(lens) <- "N"
+zscores.all <- cbind(zscores.all, lens$N)
+
+mirna.family.DGE <- readRDS("Datafiles/mirna-counts-deseq-by-family-09282019.rds")
+zscores.all <- as_tibble(zscores.all, rownames = "miR.family")
+zscores.all <- inner_join(zscores.all, mirna.family.DGE[,c(1,7)], by = c("miR.family" = "miR.family"))
+colnames(zscores.all)[3] <- "N"
+```
+
+```{r}
+ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+  geom_point(colour = "#EC469A", alpha = 0.6) +
+  xlab("RNA-Seq Z-score") +
+  ylab("miRNA family abundance") +
+  theme_bw() +
+      theme(panel.border = element_rect(),
+      panel.background = element_blank(),
+      panel.grid.major = element_line(), 
+      panel.grid.minor = element_line(),
+      axis.title.x = element_text(size=14, margin = margin(t = 10)),
+      axis.title.y = element_text(size=14, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.x = element_line(size = 0.5),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+pdf("PDF_figure/CDF_zscore_merged/RNA_CDF_zscore.pdf",
+    height = 4,
+    width = 6)
+ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+  geom_point(colour = "#EC469A", alpha = 0.6) +
+  xlab("RNA-Seq Z-score") +
+  ylab("miRNA family abundance") +
+  theme_bw() +
+      theme(panel.border = element_rect(),
+      panel.background = element_blank(),
+      panel.grid.major = element_line(), 
+      panel.grid.minor = element_line(),
+      axis.title.x = element_text(size=14, margin = margin(t = 10)),
+      axis.title.y = element_text(size=14, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.x = element_line(size = 0.5),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+dev.off()
+
+cor.test(zscores.all$z.score, log2(zscores.all$baseMean))
+```
+
+### Protein
+Compute GSEA z-scores using the PAGE method
+```{r}
+zscore.cal <- function(genes = NA, index = NA, expression.dataset){
+  if (sum(!is.na(genes)) > 0 && is.na(index)){
+    gene.set <- expression.dataset[expression.dataset$UniprotID %in% genes,]
+  } else if (!is.na(index)) {
+    gene.set <- expression.dataset[index,]
+  } else {
+    print("Please input gene names or row index.")
+  }
+  mu <- mean(expression.dataset$LFC)
+  Sm <- mean(gene.set$LFC)
+  m <- length(genes)
+  SD <- sd(expression.dataset$LFC)
+  z <- (Sm-mu)*sqrt(m)/SD
+  return(z)
+}
+```
+
+```{r}
+zscores.all <- as.data.frame(sapply(mir.targets,
+                              function(targets){
+                                  zscore.cal(genes = targets$target_Uniprot_ID, expression.dataset = DGE_pro)
+                            }))
+colnames(zscores.all) <- c("z.score")
+lens <- as.data.frame(sapply(mir.targets, function(x) length(x)))
+colnames(lens) <- "N"
+zscores.all <- cbind(zscores.all, lens$N)
+zscores.all <- as_tibble(zscores.all, rownames = "miR.family")
+zscores.all <- inner_join(zscores.all, mirna.family.DGE[,c(1,7)], by = c("miR.family" = "miR.family"))
+colnames(zscores.all)[3] <- "N"
+```
+
+```{r}
+ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+  geom_point(colour = "#1C75BB", alpha = 0.6) +
+  xlab("Proteomics Z-score") +
+  ylab("miRNA family abundance") +
+  theme_bw() +
+      theme(panel.border = element_rect(),
+      panel.background = element_blank(),
+      panel.grid.major = element_line(), 
+      panel.grid.minor = element_line(),
+      axis.title.x = element_text(size=14, margin = margin(t = 10)),
+      axis.title.y = element_text(size=14, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.x = element_line(size = 0.5),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+pdf("PDF_figure/CDF_zscore_merged/Protein_CDF_zscore.pdf",
+    height = 4,
+    width = 6)
+ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+  geom_point(colour = "#1C75BB", alpha = 0.6) +
+  xlab("Proteomics Z-score") +
+  ylab("miRNA family abundance") +
+  theme_bw() +
+      theme(panel.border = element_rect(),
+      panel.background = element_blank(),
+      panel.grid.major = element_line(), 
+      panel.grid.minor = element_line(),
+      axis.title.x = element_text(size=14, margin = margin(t = 10)),
+      axis.title.y = element_text(size=14, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      axis.ticks.x = element_line(size = 0.5),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+dev.off()
+
+cor.test(zscores.all$z.score, log2(zscores.all$baseMean))
+```
+
+
+## SessionInfo
+```{r}
+sessionInfo()
+```

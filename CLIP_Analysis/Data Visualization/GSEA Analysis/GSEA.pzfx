@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?><GraphPadPrismFile PrismXMLVersion="5.00">
+<Created>
+<OriginalVersion CreatedByProgram="GraphPad Prism" CreatedByVersion="9.2.0.283" Login="root" DateTime="2021-07-22T17:09:01-04:00"></OriginalVersion>
+<MostRecentVersion CreatedByProgram="GraphPad Prism" CreatedByVersion="9.2.0.283" Login="root" DateTime="2021-09-13T15:51:22-04:00"></MostRecentVersion>
+</Created>
+<InfoSequence>
+<Ref ID="Info0" Selected="1"></Ref>
+</InfoSequence>
+<Info ID="Info0">
+<Title>Project info 1</Title>
+<Notes></Notes>
+<Constant><Name>Experiment Date</Name><Value>2021-07-22</Value></Constant>
+<Constant><Name>Experiment ID</Name><Value></Value></Constant>
+<Constant><Name>Notebook ID</Name><Value></Value></Constant>
+<Constant><Name>Project</Name><Value></Value></Constant>
+<Constant><Name>Experimenter</Name><Value></Value></Constant>
+<Constant><Name>Protocol</Name><Value></Value></Constant>
+</Info>
+
+<TableSequence>
+<Ref ID="Table0" Selected="1"></Ref>
+</TableSequence>
+<Table ID="Table0" XFormat="none" YFormat="replicates" Replicates="1" TableType="TwoWay" EVFormat="AsteriskAfterNumber">
+<Title>miRNA GSEA</Title>
+<RowTitlesColumn Width="345">
+<Subcolumn>
+<d>APICAL_JUNCTION</d>
+<d>MYOGENESIS</d>
+<d>UV_RESPONSE_DN</d>
+<d>EPITHELIAL_MESENCHYMAL_TRANSITION</d>
+<d>MTORC1_SIGNALING</d>
+<d>INTERFERON_GAMMA_RESPONSE</d>
+</Subcolumn>
+</RowTitlesColumn>
+<YColumn Width="81" Decimals="8" Subcolumns="1">
+<Title>let-7/miR-98-5p</Title>
+<Subcolumn>
+<d>1.48741242</d>
+<d>1.70581938</d>
+<d>1.50095956</d>
+<d></d>
+<d></d>
+<d>-2.0496202</d>
+</Subcolumn>
+</YColumn>
+<YColumn Width="81" Decimals="8" Subcolumns="1">
+<Title>miR-29-3p</Title>
+<Subcolumn>
+<d>1.85414329</d>
+<d>1.54920799</d>
+<d></d>
+<d>1.49397336</d>
+</Subcolumn>
+</YColumn>
+<YColumn Width="81" Decimals="7" Subcolumns="1">
+<Title>miR-200/429-3p</Title>
+<Subcolumn>
+<d></d>
+<d></d>
+<d></d>
+<d></d>
+<d>-1.6309779</d>
+</Subcolumn>
+</YColumn>
+</Table>
+
+<!--Analyses, graphs and layouts as compressed binary. Don&apos;t edit this part of the file.-->
+
+<Template dt:dt="bin.base64" xmlns:dt="urn:schemas-microsoft-com:datatypes">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
+rcGFnQ==</Template></GraphPadPrismFile>

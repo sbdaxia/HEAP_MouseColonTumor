@@ -1,0 +1,245 @@
+---
+title: "RNA_half_life_CDF"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library setup
+
+```{r message=FALSE, warning=FALSE}
+library(data.table)
+library(gdata)
+library(rtracklayer)
+library(ggplot2)
+library(biomaRt)
+library(RColorBrewer)
+library(readr)
+library(ensembldb)
+library(EnsDb.Mmusculus.v79)
+library(org.Mm.eg.db)
+library(org.Hs.eg.db)
+library(AnnotationDbi)
+library(tidyverse)
+library(plotly)
+```
+
+
+## CDF analysis using CLIP data and RNA with different half lifes
+Set up the function
+```{r}
+dir.create("PDF_figure/RNA_half_life_merged", showWarnings = FALSE)
+
+plotCDF.ggplot <- function(gene.counts, gene.sets, gene.set.labels,
+                           col = "", linetype = "", xlim = c( -1.0, 1.3 ),
+                           legend.size = 22, axistitle.size = 22, title = "Fold change log2 (Dicer KO/WT)",
+                           legend.pos = c(0.7, 0.18)) {
+  require(ggplot2)
+  df.log2fc <- gene.counts[,c("gene", "log2FC")]
+  #rownames(df.log2fc) <- df.log2fc$gene
+  if (length(gene.sets) != length(gene.set.labels)){
+    return("Length of gene sets doesn't match labels")
+  }
+  target.expr <- df.log2fc[df.log2fc$gene %in% gene.sets[[1]],]
+  for (i in 2:length(gene.sets)){
+    target.expr <- rbind(target.expr, df.log2fc[df.log2fc$gene %in% gene.sets[[i]],])
+  }
+
+  gene.set.counts <- c()
+  for (j in 1:length(gene.sets)){
+    gene.set.counts <- c(gene.set.counts, sum(df.log2fc$gene %in% gene.sets[[j]]))
+  }
+  
+  target.expr$Category <- rep(gene.set.labels, gene.set.counts)
+  target.expr$Category <- factor(target.expr$Category, levels = gene.set.labels)
+  
+  log2FC.values <- lapply(gene.sets, function(gene.set) {
+    gene.counts[gene.counts$gene %in% gene.set,]$log2FC
+  })
+
+  ks.pvals <- lapply(log2FC.values,
+                     function(log2FCs) {
+                       ks.test(log2FCs, log2FC.values[[1]])$p.value
+                     })
+  
+  p <- ggplot( target.expr, aes( x = log2FC, colour = Category ) ) +
+  stat_ecdf( geom = 'step', aes( colour = Category, linetype = Category ), lwd = 1 ) +
+  scale_color_manual( values = col, labels = sprintf( "%s (%d)", gene.set.labels, gene.set.counts ) ) +
+  scale_linetype_manual( values = linetype, labels = sprintf( "%s (%d)", gene.set.labels, gene.set.counts ) ) +
+  # xlim() will remove data points; Be careful in the future
+  coord_cartesian( xlim = xlim ) + xlab(title) + ylab('CDF') +
+  theme_classic() + theme( legend.background = element_rect(fill = NA), 
+                           legend.title = element_blank(), 
+                           legend.position = legend.pos,
+                           legend.text = element_text(size=legend.size),
+                           legend.key.size = unit(1.5, 'lines'),
+                           axis.title.x = element_text(size=axistitle.size, margin = margin(t = 10)),
+                           axis.title.y = element_text(size=axistitle.size, margin = margin(r = 10)),
+                           axis.text=element_text(size=20),
+                           axis.line = element_line(size = 1),  #axis label size
+                           axis.ticks.length = unit(0.3, "cm")) #increase tick length
+  
+  for (k in 2:length(gene.sets)){
+    p <- p + annotate(geom = "text", x = -0.9, y = 1-0.08*(k-1), hjust = 0, 
+                      label = sprintf("p = %.0e", ks.pvals[k]), 
+                      colour = col[k], size = 8)
+  }
+  print(p)
+}
+```
+
+## Input the NCBI `homologene` Database
+Homo Sapian Taxonomy ID is 9606.
+Mus Musculus Taxonomy ID is 10090.
+```{r}
+homologene <- read_tsv("homologene.data", col_names = FALSE)
+
+homologene <- homologene[homologene$X2 == '9606' | homologene$X2 == '10090',]
+
+homologene_human <- homologene %>% dplyr::filter(X2 == 9606)
+colnames(homologene_human) <- c("HID", "Taxonomy.ID", "human_GeneID", "human_GeneSymbol", "human_ProteinGi", "human_ProteinAcessionn")
+homologene_mouse <- homologene %>% dplyr::filter(X2 == 10090)
+colnames(homologene_mouse) <- c("HID", "Taxonomy.ID", "mouse_GeneID", "mouse_GeneSymbol", "mouse_ProteinGi", "mouse_ProteinAcessionn")
+
+homologene <- inner_join(homologene_human, homologene_mouse, by = c("HID" = "HID"))
+homologene$human_GeneID <- as.character(homologene$human_GeneID)
+homologene$mouse_GeneID <- as.character(homologene$mouse_GeneID)
+```
+
+## Input list of RNA half lifes
+```{r}
+rna_life <- read_csv('mRNA half life_Tani.csv', col_names = TRUE)
+gene_list <- rna_life$RepName
+annotations_ensembl <- AnnotationDbi::select(org.Hs.eg.db,
+                                           keys = gene_list,
+                                           columns = c("ENTREZID"),
+                                           keytype = "REFSEQ")
+
+colnames(annotations_ensembl)[2] <- "Human_Entrez"
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_ensembl$Human_Entrez) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_ensembl <- annotations_ensembl[non_duplicates_idx, ]
+
+# remove NA
+annotations_ensembl <- annotations_ensembl[!is.na(annotations_ensembl$Human_Entrez),]
+
+# Check number of NAs returned
+is.na(annotations_ensembl$Human_Entrez) %>%
+  which() %>%
+  length()
+
+# map human Entrez to RNA half life 
+rna_life <- inner_join(rna_life, annotations_ensembl, by = c("RepName" = "REFSEQ"))
+
+## map mouse Entrez to human Entrez
+rna_life <- rna_life[!is.na(rna_life$`t1/2 (h)`),]
+rna_life <- inner_join(rna_life, homologene[,c(3,8)], by = c("Human_Entrez" = "human_GeneID"))
+colnames(rna_life)[6] <- "Mouse_Entrez"
+
+rna_life <- rna_life[!is.na(rna_life$Mouse_Entrez),]
+```
+
+I am assuming that mouse and human RNA half lives are the same for homologous genes.
+```{r}
+# Identify the top quantile and bottom quantile genes based on RNA half life
+quantile <- quantile(rna_life$`t1/2 (h)`, probs = c(0.1, 0.9))
+
+long_list <- rna_life$Mouse_Entrez[rna_life$`t1/2 (h)` >= quantile[2]]
+short_list <- rna_life$Mouse_Entrez[rna_life$`t1/2 (h)` <= quantile[1]]
+
+```
+
+## Input list of peaks
+```{r}
+peaks.mir <- readRDS("Datafiles/merged-peaks-mirs-200-09282019-withID.rds")
+long_peaks <- peaks.mir[peaks.mir$target_Entrez_ID %in% long_list,]$name
+short_peaks <- peaks.mir[peaks.mir$target_Entrez_ID %in% short_list,]$name
+peak.DGE <- as.data.frame(cbind(peaks.mir$name, peaks.mir$hvak.hva.log2FC))
+colnames(peak.DGE)[1] <- "gene"
+colnames(peak.DGE)[2] <- "log2FC"
+peak.DGE$log2FC <- as.numeric(as.character(peak.DGE$log2FC))
+
+cols <- brewer.pal(name = "Set2", n = 3)
+plotCDF.ggplot(peak.DGE,
+               list(short_peaks, long_peaks),
+               c("Short half-life", "Long half-life"),
+               col = c("grey15", cols[1]),
+               linetype = c(1, 1),
+               title = "CLIP_LFC(K-Ras_G12D/WT)"
+               )
+
+pdf("PDF_figure/RNA_half_life_merged/CDF_RNA_halflife_human.pdf",
+    height = 4,
+    width = 6)
+plotCDF.ggplot(peak.DGE,
+               list(short_peaks, long_peaks),
+               c("Short half-life", "Long half-life"),
+               col = c("grey15", cols[1]),
+               linetype = c(1, 1),
+               title = "CLIP_LFC(K-Ras_G12D/WT)",
+               xlim = c(-8,8)
+               )
+dev.off()
+```
+ 
+## Analysis using RNA half life data from mES from Sharova et al., DNA Research, 2008
+### Input list of RNA half lifes
+```{r}
+rna_life <- read_csv('mRNA half life_Sharova_mES.csv', col_names = TRUE)
+```
+
+```{r}
+# Identify the top quantile and bottom quantile genes based on RNA half life
+quantile <- quantile(rna_life$half_life, probs = c(0.1, 0.9))
+
+long_list <- rna_life$geneSymbol[rna_life$half_life  >= quantile[2]]
+short_list <- rna_life$geneSymbol[rna_life$half_life <= quantile[1]]
+
+peaks.mir <- readRDS("Datafiles/merged-peaks-mirs-200-09282019-withID.rds")
+
+long_peaks <- peaks.mir[peaks.mir$target_gene %in% long_list,]$name
+short_peaks <- peaks.mir[peaks.mir$target_gene %in% short_list,]$name
+
+peak.DGE <- as.data.frame(cbind(peaks.mir$name, peaks.mir$hvak.hva.log2FC))
+colnames(peak.DGE)[1] <- "gene"
+colnames(peak.DGE)[2] <- "log2FC"
+peak.DGE$log2FC <- as.numeric(as.character(peak.DGE$log2FC))
+
+cols <- brewer.pal(name = "Set2", n = 3)
+plotCDF.ggplot(peak.DGE,
+               list(short_peaks, long_peaks),
+               c("Short half-life", "Long half-life"),
+               col = c("grey15", cols[1]),
+               linetype = c(1, 1),
+               title = "CLIP_LFC(K-Ras_G12D/WT)"
+               )
+
+pdf("PDF_figure/RNA_half_life_merged/CDF_RNA_halflife_mouse.pdf",
+    height = 4,
+    width = 6)
+plotCDF.ggplot(peak.DGE,
+               list(short_peaks, long_peaks),
+               c("Short half-life", "Long half-life"),
+               col = c("grey15", cols[1]),
+               linetype = c(1, 1),
+               title = "CLIP_LFC(K-Ras_G12D/WT)"
+               )
+dev.off()
+```
+
+## SessionInfo
+```{r}
+sessionInfo()
+```
+ 
+ 

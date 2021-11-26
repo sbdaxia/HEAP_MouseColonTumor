@@ -1,0 +1,179 @@
+---
+title: "CDF with ATAC"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+```{r message=FALSE, warning=FALSE}
+library(DESeq2)
+library(data.table)
+library(gdata)
+library(rtracklayer)
+library(VennDiagram)
+library(ggplot2)
+library(biomaRt)
+library(RColorBrewer)
+library(readr)
+library(ensembldb)
+library(EnsDb.Mmusculus.v79)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(tidyverse)
+library(plotly)
+```
+
+## Set up function
+```{r}
+plotCDF.ggplot <- function(gene.counts, gene.sets, gene.set.labels,
+                           col = "", linetype = "", xlim = c( -1.0, 1.3 ),
+                           legend.size = 22, axistitle.size = 22, title = "Fold change log2 (Dicer KO/WT)",
+                           legend.pos = c(0.7, 0.18), geom = "step") {
+  require(ggplot2)
+  df.log2fc <- gene.counts[,c("gene", "log2FC")]
+  #rownames(df.log2fc) <- df.log2fc$gene
+  if (length(gene.sets) != length(gene.set.labels)){
+    return("Length of gene sets doesn't match labels")
+  }
+  target.expr <- df.log2fc[df.log2fc$gene %in% gene.sets[[1]],]
+  for (i in 2:length(gene.sets)){
+    target.expr <- rbind(target.expr, df.log2fc[df.log2fc$gene %in% gene.sets[[i]],])
+  }
+
+  gene.set.counts <- c()
+  for (j in 1:length(gene.sets)){
+    gene.set.counts <- c(gene.set.counts, sum(df.log2fc$gene %in% gene.sets[[j]]))
+  }
+  
+  target.expr$Category <- rep(gene.set.labels, gene.set.counts)
+  target.expr$Category <- factor(target.expr$Category, levels = gene.set.labels)
+  
+  log2FC.values <- lapply(gene.sets, function(gene.set) {
+    gene.counts[gene.counts$gene %in% gene.set,]$log2FC
+  })
+
+  ks.pvals <- lapply(log2FC.values,
+                     function(log2FCs) {
+                       ks.test(log2FCs, log2FC.values[[1]])$p.value
+                     })
+  
+  p <- ggplot( target.expr, aes( x = log2FC, colour = Category ) ) +
+  stat_ecdf( geom = geom, aes( colour = Category, linetype = Category ), lwd = 1 ) +
+  scale_color_manual( values = col, labels = sprintf( "%s (%d)", gene.set.labels, gene.set.counts ) ) +
+  scale_linetype_manual( values = linetype, labels = sprintf( "%s (%d)", gene.set.labels, gene.set.counts ) ) +
+  # xlim() will remove data points; Be careful in the future
+  coord_cartesian( xlim = xlim ) + xlab(title) + ylab('CDF') +
+  theme_classic() + theme( legend.background = element_rect(fill = NA), 
+                           legend.title = element_blank(), 
+                           legend.position = legend.pos,
+                           legend.text = element_text(size=legend.size),
+                           legend.key.size = unit(1.5, 'lines'),
+                           axis.title.x = element_text(size=axistitle.size, margin = margin(t = 10)),
+                           axis.title.y = element_text(size=axistitle.size, margin = margin(r = 10)),
+                           axis.text=element_text(size=20),
+                           axis.line = element_line(size = 1),  #axis label size
+                           axis.ticks.length = unit(0.3, "cm")) #increase tick length
+  
+  for (k in 2:length(gene.sets)){
+    p <- p + annotate(geom = "text", x = -0.5, y = 1-0.08*(k-1), hjust = 0, 
+                      label = sprintf("p = %.0e", ks.pvals[k]), 
+                      colour = col[k], size = 8)
+  }
+  print(p)
+}
+```
+
+## Load datasets
+```{r}
+# Load HEAP-CLIP peak-miR match
+peaks.mir <- readRDS("Datafiles/merged-peaks-mirs-200-09282019-withID.rds")
+
+# Load RNA-Seq
+rna_DGE <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/RNA-Seq/Mouse colon tumor/4-OHT enema model/Analysis/Differential Analysis_filtered.csv")
+colnames(rna_DGE)[c(1,3)] <- c("gene", "LFC")
+
+# Load ATAC-Seq
+atac_res <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/ATAC-Seq/Mouse colon/Analysis/Tumor/Result/ATAC_crc_Kras-WT_merged.csv")
+colnames(atac_res)[c(8,24)] <- c("log2FC", "gene")
+```
+
+## Prepare datasets
+```{r}
+rna_DGE <- rna_DGE %>% filter(gene %in% peaks.mir$target_Ensembl_ID)
+
+cols <- c(brewer.pal(name = "Set2", n = 4))
+```
+
+## RNA-UP miRNA targets
+```{r fig.height=4, fig.width=6}
+rna_up <- rna_DGE %>% filter(LFC > 0)
+plotCDF.ggplot(atac_res,
+               list(atac_res$gene, rna_up$gene),
+               c("All genes", "HEAP targets with RNA LFC>0"),
+               col = c("grey15", cols[3]),
+               linetype = c(1, 1),
+               title = "ATAC_LFC(K-Ras_G12D/WT)",
+               xlim = c(-0.5,0.5),
+               geom = "line"
+               )
+
+ggsave("ATAC_CDF_HEAP_targets_RNA_UP.eps", device = "eps", path = "PDF_figure/", width = 10, height = 8, units = "in")
+
+dir.create("PDF_figure/CDF_with_ATAC", showWarnings = FALSE)
+pdf("PDF_figure/CDF_with_ATAC/ATAC_CDF_HEAP_targets_RNA_UP.pdf",
+    width = 10,
+    height = 8)
+plotCDF.ggplot(atac_res,
+               list(atac_res$gene, rna_up$gene),
+               c("All genes", "HEAP targets with RNA LFC>0"),
+               col = c("grey15", cols[3]),
+               linetype = c(1, 1),
+               title = "ATAC_LFC(K-Ras_G12D/WT)",
+               xlim = c(-0.5,0.5)
+               )
+dev.off()
+```
+
+## RNA-DOWN miRNA targets
+```{r fig.height=4, fig.width=6}
+rna_down <- rna_DGE %>% filter(LFC < 0)
+plotCDF.ggplot(atac_res,
+               list(atac_res$gene, rna_down$gene),
+               c("All genes", "HEAP targets with RNA LFC<0"),
+               col = c("grey15", cols[4]),
+               linetype = c(1, 1),
+               title = "ATAC_LFC(K-Ras_G12D/WT)",
+               xlim = c(-0.5,0.5),
+               geom = "line"
+               )
+
+ggsave("ATAC_CDF_HEAP_targets_RNA_DOWN.eps", device = "eps", path = "PDF_figure/", width = 10, height = 8, units = "in")
+
+dir.create("PDF_figure/CDF_with_ATAC", showWarnings = FALSE)
+pdf("PDF_figure/CDF_with_ATAC/ATAC_CDF_HEAP_targets_RNA_DOWN.pdf",
+    width = 10,
+    height = 8)
+plotCDF.ggplot(atac_res,
+               list(atac_res$gene, rna_down$gene),
+               c("All genes", "HEAP targets with RNA LFC<0"),
+               col = c("grey15", cols[4]),
+               linetype = c(1, 1),
+               title = "ATAC_LFC(K-Ras_G12D/WT)",
+               xlim = c(-0.5,0.5)
+               )
+dev.off()
+```
+
+
+## SessionInfo
+```{r}
+sessionInfo()
+```

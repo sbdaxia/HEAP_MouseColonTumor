@@ -1,0 +1,3368 @@
+---
+title: "CLIP_visualization_092819"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+  
+## Library Loading for the analysis
+```{r message=FALSE, warning=FALSE}
+library(ensembldb)
+library(EnsDb.Mmusculus.v79)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+library(data.table)
+library(tidyverse)
+library(rtracklayer)
+library(Rsamtools)
+library(DESeq2)
+library(Rsubread)
+library(VennDiagram)
+library(CLIPanalyze)
+library(RColorBrewer)
+library(gplots)
+library(Biostrings)
+library(pheatmap)
+library(ggrepel)
+library(rvest)
+library(ggseqlogo)
+library(gridExtra)
+```
+
+## Filtered version
+In the filtered version, each peak is also filtered to only contain peaks that have more than 10 counts.
+
+## Analysis for the HVA sample CLIP data {#hvaclip}
+
+Load the `rds` file from HVA_1/2/3 3 sample CLIP analysis and use MA plot to visuaize that sequence depth are balanced between CLIP and IC libraries, and the peaks that were called.
+```{r}
+dir.create("PDF_figure/CLIP_visualization_09282019", showWarnings = FALSE)
+
+peak.data.hva<- readRDS("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/peakdata.HVA.rds")
+
+plotMA(peak.data.hva$gene.counts.nopeaks,
+       main = "MA plot for HVA HEAP vs IC\n in genes outside peaks")
+
+pdf("PDF_figure/CLIP_visualization_09282019/MAPlot_HVA_HEAPvIC_OutsidePeaks.pdf",
+    height = 4,
+    width = 5)
+plotMA(peak.data.hva$gene.counts.nopeaks,
+       main = "MA plot for HVA HEAP vs IC\n in genes outside peaks")
+dev.off()
+
+plotMA(peak.data.hva$res.deseq,
+       main = "MA plot for HVA HEAP vs IC in peaks,\none-sided test")
+
+pdf("PDF_figure/CLIP_visualization_09282019/MAPlot_HVA_HEAPvIC_InPeaks.pdf",
+    height = 4,
+    width = 5)
+plotMA(peak.data.hva$res.deseq,
+       main = "MA plot for HVA HEAP vs IC in peaks,\none-sided test")
+dev.off()
+```
+
+Prepare the peak, assign scores to HVA peaks by adjusted p-value.
+```{r}
+peaks.all.hva <- peak.data.hva$peaks
+peaks.all.hva <- subset(peaks.all.hva, width > 20)
+peaks.all.hva <- subset(peaks.all.hva, log2FC > 0)
+peaks.all.hva <- keepStandardChromosomes(peaks.all.hva)
+score(peaks.all.hva) <- -log10(peaks.all.hva$padj)
+length(peaks.all.hva)
+summary(width(peaks.all.hva))
+
+count.threshold <- 10
+norm.counts <- counts(peak.data.hva$peak.counts, normalized = TRUE)
+norm.counts <- norm.counts[names(peaks.all.hva), ]
+colnames(norm.counts)[1:12] <- c(paste0("HVA", 1:6), paste0("HVA-IC", 1:6))
+selected.peaks <- rowMeans(norm.counts[, paste0("HVA", 1:6)]) > count.threshold 
+peaks.all.hva <- peaks.all.hva[selected.peaks, ]
+
+length(peaks.all.hva)
+summary(width(peaks.all.hva))
+```
+Count fraction of peaks in genomic features for top N peaks selected by p-value of enrichment in WT HEAP-CLIP vs. input:
+```{r}
+countFeatures <- function(peaks, top.n, ignore.intergenic = FALSE) {
+    peak.subset <- peaks
+    if (ignore.intergenic) {
+        peak.subset <- subset(peak.subset, annot != "intergenic")
+    }
+    peak.subset <- subset(peak.subset, rank(-peak.subset$score) <= top.n)
+    table(peak.subset$annot) / length(peak.subset)
+}
+npeaks <- seq(1, 10) * 300
+feature.frac.hva.peaks <-
+    sapply(npeaks, function(x) countFeatures(peaks.all.hva, x))
+colnames(feature.frac.hva.peaks) <- npeaks
+
+write.csv(as.data.frame(feature.frac.hva.peaks), "feature_frac_hva_peaks.csv")
+
+for (feature in c("utr3", "utr5", "exon", "intron", "intergenic")) {
+    plot(colnames(feature.frac.hva.peaks), feature.frac.hva.peaks[feature, ],
+         type = "o",
+         main = sprintf("fraction of HVA peaks in %s", feature),
+         xlab = "top N peaks by adjusted p-value",
+         ylab = sprintf("fraction of peaks in %s", feature))
+}
+
+pdf("PDF_figure/CLIP_visualization_09282019/Fraction_of_HVA_peaks.pdf",
+    height = 4,
+    width = 5)
+for (feature in c("utr3", "utr5", "exon", "intron", "intergenic")) {
+    plot(colnames(feature.frac.hva.peaks), feature.frac.hva.peaks[feature, ],
+         type = "o",
+         main = sprintf("fraction of HVA peaks in %s", feature),
+         xlab = "top N peaks by adjusted p-value",
+         ylab = sprintf("fraction of peaks in %s", feature))
+}
+dev.off()
+```
+
+Select peaks significantly enriched over input and are in 3'UTR for further analysis.
+```{r}
+padj.threshold <- 5*1e-2
+hva.peaks <- subset(peaks.all.hva, padj < padj.threshold)
+score(hva.peaks) <- -log10(hva.peaks$padj)
+hva.peaks$input.log2FC <- hva.peaks$log2FC
+hva.peaks$input.padj <- hva.peaks$padj
+hva.peaks$log2FC <- NULL
+hva.peaks$padj <- NULL
+saveRDS(hva.peaks, "peaks-HVA-selected.rds")
+length(hva.peaks)
+summary(width(hva.peaks))
+peaks.hva.utr3 <- subset(hva.peaks, annot =="utr3")
+length(peaks.hva.utr3)
+```
+
+## Analysis for the HVAK sample CLIP data {#hvakclip}
+Load the `rds` file from HVAK sample CLIP analysis and use MA plot to visuaize that sequence depth are balanced between CLIP and IC libraries, and the peaks that were called.
+
+```{r}
+peak.data.hvak<- readRDS("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/peakdata.HVAK.rds")
+
+plotMA(peak.data.hvak$gene.counts.nopeaks,
+       main = "MA plot for HVAK HEAP vs IC\n in genes outside peaks")
+
+pdf("PDF_figure/CLIP_visualization_09282019/MAPlot_HVAK_HEAPvIC_OutsidePeaks.pdf",
+    height = 4,
+    width = 5)
+plotMA(peak.data.hvak$gene.counts.nopeaks,
+       main = "MA plot for HVAK HEAP vs IC\n in genes outside peaks")
+dev.off()
+
+plotMA(peak.data.hvak$res.deseq,
+       main = "MA plot for HVAK HEAP vs IC in peaks,\none-sided test")
+
+pdf("PDF_figure/CLIP_visualization_09282019/MAPlot_HVAK_HEAPvIC_InPeaks.pdf",
+    height = 4,
+    width = 5)
+plotMA(peak.data.hvak$res.deseq,
+       main = "MA plot for HVAK HEAP vs IC in peaks,\none-sided test")
+dev.off()
+```
+
+Prepare the peak, assign scores to KRas peaks by adjusted p-value.
+```{r}
+peaks.all.hvak <- peak.data.hvak$peaks
+peaks.all.hvak <- subset(peaks.all.hvak, width > 20)
+peaks.all.hvak <- subset(peaks.all.hvak, log2FC > 0)
+peaks.all.hvak <- keepStandardChromosomes(peaks.all.hvak)
+score(peaks.all.hvak) <- -log10(peaks.all.hvak$padj)
+length(peaks.all.hvak)
+summary(width(peaks.all.hvak))
+
+norm.counts <- DESeq2::counts(peak.data.hvak$peak.counts, normalized = TRUE)
+norm.counts <- norm.counts[names(peaks.all.hvak), ]
+colnames(norm.counts)[1:12] <- c(paste0("HVAK", 1:6), paste0("HVAK-IC", 1:6))
+selected.peaks <- rowMeans(norm.counts[, paste0("HVAK", 1:6)]) > count.threshold 
+peaks.all.hvak <- peaks.all.hvak[selected.peaks, ]
+
+length(peaks.all.hvak)
+summary(width(peaks.all.hvak))
+```
+
+Count fraction of peaks in genomic features for top N peaks selected by p-value of enrichment in WT HEAP-CLIP vs. input:
+```{r, eval = FALSE}
+countFeatures <- function(peaks, top.n, ignore.intergenic = FALSE) {
+    peak.subset <- peaks
+    if (ignore.intergenic) {
+        peak.subset <- subset(peak.subset, annot != "intergenic")
+    }
+    peak.subset <- subset(peak.subset, rank(-peak.subset$score) <= top.n)
+    table(peak.subset$annot) / length(peak.subset)
+}
+npeaks <- seq(1, 10) * 900
+feature.frac.hvak.peaks <-
+    sapply(npeaks, function(x) countFeatures(peaks.all.hvak, x))
+colnames(feature.frac.hvak.peaks) <- npeaks
+
+write.csv(as.data.frame(feature.frac.hvak.peaks), "feature_frac_hvak_peaks.csv")
+
+
+for (feature in c("utr3", "utr5", "exon", "intron", "intergenic")) {
+    plot(colnames(feature.frac.hvak.peaks), feature.frac.hvak.peaks[feature, ],
+         type = "o",
+         main = sprintf("fraction of HVAK peaks in %s", feature),
+         xlab = "top N peaks by adjusted p-value",
+         ylab = sprintf("fraction of peaks in %s", feature))
+}
+
+pdf("PDF_figure/CLIP_visualization_09282019/Fraction_of_HVAK_peaks.pdf",
+    height = 4,
+    width = 5)
+for (feature in c("utr3", "utr5", "exon", "intron", "intergenic")) {
+    plot(colnames(feature.frac.hvak.peaks), feature.frac.hvak.peaks[feature, ],
+         type = "o",
+         main = sprintf("fraction of HVAK peaks in %s", feature),
+         xlab = "top N peaks by adjusted p-value",
+         ylab = sprintf("fraction of peaks in %s", feature))
+}
+dev.off()
+```
+Select peaks significantly enriched over input and are in 3'UTR for further analysis.
+```{r}
+padj.threshold <- 5*1e-2
+hvak.peaks <- subset(peaks.all.hvak, padj < padj.threshold)
+score(hvak.peaks) <- -log10(hvak.peaks$padj)
+hvak.peaks$input.log2FC <- hvak.peaks$log2FC
+hvak.peaks$input.padj <- hvak.peaks$padj
+hvak.peaks$log2FC <- NULL
+hvak.peaks$padj <- NULL
+saveRDS(hvak.peaks, "peaks-HVAK-selected.rds")
+length(hvak.peaks)
+summary(width(hvak.peaks))
+peaks.hvak.utr3 <- subset(hvak.peaks, annot =="utr3")
+length(peaks.hvak.utr3)
+```
+
+## Cross analysis of HVA and HVAK CLIP results {#crossclip}
+Venndiagram for mapping all overlapping peaks that have a LFC > 0 and padj < 0.05 between the HVA and HVAK samples
+```{r}
+peaks.overlap <- subsetByOverlaps(hva.peaks, hvak.peaks)
+length(peaks.overlap)
+
+grid.newpage()
+draw.pairwise.venn(length(hvak.peaks),
+                   length(hva.peaks),
+                   length(peaks.overlap),
+                   catergory <- c("HEAP-CLIP Peaks \nHVAK",
+                                  "HEAP-CLIP Peaks \nHVA"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.08, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+
+pdf("PDF_figure/CLIP_visualization_09282019/Venn_HVA_HVAK_peaks.pdf",
+    width = 8,
+    height = 6)
+draw.pairwise.venn(length(hvak.peaks),
+                   length(hva.peaks),
+                   length(peaks.overlap),
+                   catergory <- c("HEAP-CLIP Peaks \nHVAK",
+                                  "HEAP-CLIP Peaks \nHVA"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.08, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+dev.off()
+```
+
+Venndiagram for mapping overlapping peaks in 3' UTR that have a LFC > 0, padj < 0.05, and are in 3' UTR between the HVA and HVAK samples
+```{r}
+peaks.utr3.overlap <- subsetByOverlaps(peaks.hva.utr3, peaks.hvak.utr3)
+length(peaks.utr3.overlap)
+
+grid.newpage()
+draw.pairwise.venn(length(peaks.hvak.utr3),
+                  length(peaks.hva.utr3),
+                  length(peaks.utr3.overlap),
+                  catergory <- c("HEAP-CLIP Peaks \nHVAK \nin 3' UTR",
+                                 "HEAP-CLIP Peaks \nHVA \nin 3' UTR"),
+                  lty = "blank",
+                  ex.text = FALSE,
+                  fill = c("pink", "lightblue"),
+                  cat.pos = c(250, 135), cat.dist = 0.1, margin = 0.1,
+                  fontfamily = "sans", cat.fontfamily = "sans")
+
+pdf("PDF_figure/CLIP_visualization_09282019/Venn_HVA_HVAK_peaks_3UTR.pdf",
+    width = 8,
+    height = 6)
+draw.pairwise.venn(length(peaks.hvak.utr3),
+                  length(peaks.hva.utr3),
+                  length(peaks.utr3.overlap),
+                  catergory <- c("HEAP-CLIP Peaks \nHVAK \nin 3' UTR",
+                                 "HEAP-CLIP Peaks \nHVA \nin 3' UTR"),
+                  lty = "blank",
+                  ex.text = FALSE,
+                  fill = c("pink", "lightblue"),
+                  cat.pos = c(250, 135), cat.dist = 0.1, margin = 0.1,
+                  fontfamily = "sans", cat.fontfamily = "sans")
+dev.off()
+```
+
+## Cross analysis with HEAP-CLIP data and proteomics and transcriptomics data {#proteinrna}
+### Idnetify HVA and HVAK specific peaks
+This analysis is done on all peaks from all regions of the genome since I decided not to limit the analysis on 3'UTR peaks.
+```{r}
+hva.specific.peaks <- hva.peaks[!hva.peaks %over% hvak.peaks,]
+hvak.specific.peaks <- hvak.peaks[!hvak.peaks %over% hva.peaks,]
+```
+
+### How many genes targeted by HVA and HVAK specific peaks are detected in proteomics
+Get a list of genes that are targeted by HVA and HVAK specific miRNA peaks in their 3' UTR regions. Obtain matched Ensembl gene ID for these genes using AnnotationDbi package. Obtain matching Uniprot ID information using AnnotationDbi package as well as BioMart on Ensembl.
+```{r}
+# obtain the list of gene names
+hva.uniq.peaks <- as.data.frame(hva.specific.peaks)
+hvak.uniq.peaks <- as.data.frame(hvak.specific.peaks)
+```
+
+#### Annotate peaks with Ensembl ID and Uniprot ID
+First we need to nnotate each peak with its potential target gene, 3'UTR annotation gets priority.
+```{r}
+## HVA
+hva.uniq.peaks$'target_gene' <- NA
+for (i in 1:dim(hva.uniq.peaks)[1]) {
+  if (!is.na(hva.uniq.peaks[i,12]) | !is.na(hva.uniq.peaks[i,13])) {
+    gene_name <- unique(unlist(hva.uniq.peaks[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    hva.uniq.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(hva.uniq.peaks[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    hva.uniq.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+hva_gene_list <- as.data.frame(table(hva.uniq.peaks$target_gene))
+write.csv(hva_gene_list, 'HVA_uniq_target.csv')
+
+## HVAK
+hvak.uniq.peaks$'target_gene' <- NA
+for (i in 1:dim(hvak.uniq.peaks)[1]) {
+  if (!is.na(hvak.uniq.peaks[i,12]) | !is.na(hvak.uniq.peaks[i,13])) {
+    gene_name <- unique(unlist(hvak.uniq.peaks[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    hvak.uniq.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(hvak.uniq.peaks[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    hvak.uniq.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+hvak_gene_list <- as.data.frame(table(hvak.uniq.peaks$target_gene))
+write.csv(hvak_gene_list, 'HVAK_uniq_target.csv')
+```
+
+Try using AnnotationDbi to convert gene name annotations to Ensembl ID and Uniprot ID
+```{r}
+# HVA
+# Ensembl IDs are annotated using `EnsDb.Mmusculus.v79` package since that is the one that I used for RNA-Seq analysis
+annotations_hva <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(hva_gene_list$Var1),
+                                           columns = c("GENEID", "UNIPROTID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_hva$UNIPROTID) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_hva$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_hva <- annotations_hva[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_hva$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID
+hva.uniq.peaks <- inner_join(hva.uniq.peaks, annotations_hva, by=c("target_gene"="GENENAME"))
+colnames(hva.uniq.peaks)[22] <- "UNIPROTID_Annot" 
+
+# how many genes have Ensembl ID
+sum(!is.na(annotations_hva$GENEID))
+
+# Now I need to acquire a list of UNIPROT ID from Uniprot website retrieval for the same list of target genes
+# load the gene name to Uniprot ID conversion table
+genename2UniprotID <- read.csv('~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/genename2uniprot_HVA.csv')
+genename2UniprotID$gene_entry <- as.character(genename2UniprotID$gene_entry)
+genename2UniprotID$Entry <- as.character(genename2UniprotID$Entry)
+
+hva.uniq.peaks$UNIPROTID_Web <- NA
+for (i in 1:dim(hva.uniq.peaks)[1]) {
+  peak.index <- grep(paste("^",hva.uniq.peaks$target_gene[i],"$", sep=""), genename2UniprotID$gene_entry)
+  if (length(genename2UniprotID$Entry[peak.index]) != 0) {
+      hva.uniq.peaks$UNIPROTID_Web[i] <- paste(genename2UniprotID$Entry[peak.index], collapse = " ")
+  }
+}
+
+# manually annotate peaks that had no matched Uniprot ID in SwissProt, using the top hit with the corresponding gene name
+no_id_list <- as.data.frame(dimnames(table(hva.uniq.peaks$target_gene[is.na(hva.uniq.peaks$UNIPROTID_Web)])))
+write.csv(no_id_list, "no.UniprotID.list.HVA_filtered.csv")
+
+# load the new list that has manually input Uniprot IDs for no ID genes and annotate the peak file
+no_id_list_ID_hva <- read.csv('~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/no.UniprotID.list_2_Uniprot_HVA_filtered.csv')
+
+for (i in 1:dim(hva.uniq.peaks)[1]) {
+  peak.index <- grep(paste("^",hva.uniq.peaks$target_gene[i],"$", sep=""), no_id_list_ID_hva$gene_names)
+  if (length(no_id_list_ID_hva$UniprotID[peak.index]) != 0) {
+      hva.uniq.peaks$UNIPROTID_Web[i] <- paste(no_id_list_ID_hva$UniprotID[peak.index], collapse = " ")
+  }
+}
+
+# how many genes have Uniprot ID
+dim(table(hva.uniq.peaks$UNIPROTID_Web))[1]
+```
+
+Now we load the enema model colon tumor proteomics files and see how much overlap we get between HVA specific peaks and proteomics.
+```{r}
+proteom_quant <- read.csv('~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/Proteomics data/colon tumor-enema model/2017-03-19_Haigis_5v5_Pro.csv')
+proteom_de <- read.csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/Proteomics data/colon tumor-enema model/crcMS_diff.csv")
+
+# check how many HVA specific HEAP targets are detected in proteomics using AnnotationDbi Uniprot Annotation
+hva_detected_proteome <- intersect(hva.uniq.peaks$UNIPROTID_Annot, proteom_quant$Protein.Id)
+length(hva_detected_proteome)
+
+# check how many HVA specific HEAP targets are detected in proteomics using Uniprot Website Uniprot Annotation
+hva_detected_proteome <- intersect(hva.uniq.peaks$UNIPROTID_Web, proteom_quant$Protein.Id)
+length(hva_detected_proteome)
+```
+This shows that annotation using Uniprot website ID retrieval is far superior than using `AnnotationDbi` package annotated Uniprot ID using `EnsDb.Mmusculus.v79` database. So I will also use Uniprot website to annotate the HFK target list with Uniprot ID. 
+
+So now we annotate the HVAK target list with Ensembl ID and Uniprot ID.
+```{r}
+# HVAK
+# Ensembl IDs are annotated using `EnsDb.Mmusculus.v79` package since that is the one that I used for RNA-Seq analysis
+annotations_hvak <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(hvak_gene_list$Var1),
+                                           columns = c("GENEID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_hvak$UNIPROTID) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_hvak$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_hvak <- annotations_hvak[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_hvak$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID
+hvak.uniq.peaks <- inner_join(hvak.uniq.peaks, annotations_hvak, by=c("target_gene"="GENENAME"))
+
+# Now I need to acquire a list of UNIPROT ID from Uniprot website retrieval for the same list of target genes
+# load the gene name to Uniprot ID conversion table
+genename2UniprotID_hvak <- read.csv('~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/genename2uniprot_HVAK.csv')
+genename2UniprotID_hvak$gene_entry <- as.character(genename2UniprotID_hvak$gene_entry)
+genename2UniprotID_hvak$Entry <- as.character(genename2UniprotID_hvak$Entry)
+
+hvak.uniq.peaks$UNIPROTID <- NA
+for (i in 1:dim(hvak.uniq.peaks)[1]) {
+  peak.index <- grep(paste("^",hvak.uniq.peaks$target_gene[i],"$", sep=""), genename2UniprotID_hvak$gene_entry)
+  if (length(genename2UniprotID_hvak$Entry[peak.index]) != 0) {
+      hvak.uniq.peaks$UNIPROTID[i] <- paste(genename2UniprotID_hvak$Entry[peak.index], collapse = " ")
+  }
+}
+
+# manually annotate peaks that had no matched Uniprot ID in SwissProt, using the top hit with the corresponding gene name
+no_id_list_hvak <- as.data.frame(dimnames(table(hvak.uniq.peaks$target_gene[is.na(hvak.uniq.peaks$UNIPROTID)])))
+write.csv(no_id_list_hvak, "no.UniprotID.list_HVAK_filtered.csv")
+
+# load the new list that has manually input Uniprot IDs for no ID genes and annotate the peak file
+no_id_list_ID_hvak <- read.csv('~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/no.UniprotID.list_2_Uniprot_HVAK_filtered.csv', col.names = FALSE)
+
+for (i in 1:dim(hvak.uniq.peaks)[1]) {
+  peak.index <- grep(paste("^",hvak.uniq.peaks$target_gene[i],"$", sep=""), rownames(no_id_list_ID_hvak))
+  if (length(no_id_list_ID_hvak$FALSE.[peak.index]) != 0) {
+      hvak.uniq.peaks$UNIPROTID[i] <- paste(no_id_list_ID_hvak$FALSE.[peak.index], collapse = " ")
+  }
+}
+
+# how many genes have Uniprot ID
+length(table(hvak.uniq.peaks$UNIPROTID))
+
+# how many genes have Ensembl ID
+length(table(hvak.uniq.peaks$GENEID))
+```
+Now we check how much overlap we get between HVAK specific peaks and proteomics.
+```{r}
+# check how many HVAK specific HEAP targets are detected in proteomics using Uniprot Website Uniprot Annotation
+hvak_detected_proteome <- intersect(hvak.uniq.peaks$UNIPROTID, proteom_quant$Protein.Id)
+length(hvak_detected_proteome)
+```
+
+### Examine protein expressions of HVA and HVAK specific targets.
+Now that we have both HVA and HVAK specific peaks annotated with target genes, EnsemblID and UniprotID, we can check how many of the protein targets are DE in proteomics dataset.
+
+#### HVA-specific targets {#hvaprotein}
+For HVA specific peaks, I expect the protein expression to increase in KrasG12D samples. So LFC > 0.
+```{r}
+# HVA
+# here we identify hit HVA-specific target proteins, p< 0.05, q < 0.1, LFC > 0
+protein_index <- c()
+for (i in 1:length(hva_detected_proteome)) {
+  protein_index <- c(protein_index, grep(paste("^",hva_detected_proteome[i],"$",sep = ""), proteom_de$Protein.Id))
+}
+hva_target_proteom_de <- proteom_de[protein_index,]
+hva_target_proteom_quant <- proteom_quant[protein_index,]
+
+hit_hva_target_proteom_de <- subset(hva_target_proteom_de, hva_target_proteom_de$p_values<0.05 & hva_target_proteom_de$q_values < 0.1 & hva_target_proteom_de$LFC > 0)
+hit_hva_target_proteom_quant <- subset(hva_target_proteom_quant, hva_target_proteom_de$p_values<0.05 & hva_target_proteom_de$q_values < 0.1 & hva_target_proteom_de$LFC > 0)
+dim(hit_hva_target_proteom_de)[1]
+write.csv(hit_hva_target_proteom_de, "Hit HVA target proteins.csv")
+```
+
+Draw heatmaps of all HVA-target proteins
+```{r}
+suppressMessages(library(mosaic))
+
+# zscore the quantifications
+for (i in 1:dim(hva_target_proteom_quant)[1]) {
+   hva_target_proteom_quant[i, 3:12]<- zscore(as.numeric(as.character(hva_target_proteom_quant[i, 3:12])))
+}
+
+for (i in 1:dim(hit_hva_target_proteom_quant)[1]) {
+   hit_hva_target_proteom_quant[i, 3:12]<- zscore(as.numeric(as.character(hit_hva_target_proteom_quant[i, 3:12])))
+}
+
+# Draw heatmap for all HVA-target proteins
+my_palette <- colorRampPalette(c("blue", "white", "red"))(256)
+heatmap_matrix <- as.matrix(hva_target_proteom_quant[,3:12])
+png('All HVA-specific target proteins.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+heatmap.2(heatmap_matrix,
+          main = "All HVA specific\nHEAP target proteins",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_All HVA-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "All HVA specific\nHEAP target proteins",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for all HVA-specific targets](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/All HVA-specific target proteins.png)
+
+Draw heatmaps for hit HVA protein targets that have p < 0.05, q < 0.1, and LFC > 0 
+```{r}
+# Draw heatmap for hit HVA-target proteins that have p < 0.05, q < 0.1, and LFC > 0
+heatmap_matrix <- as.matrix(hit_hva_target_proteom_quant[,3:12])
+png('Hit HVA-specific target proteins.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVA specific\nHEAP target proteins\np<0.05,q<0.1,LFC>0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Hit HVA-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVA specific\nHEAP target proteins\np<0.05,q<0.1,LFC>0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for hit HVA-specific targets](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Hit HVA-specific target proteins.png)
+
+#### HVAK-specific targets {#hvakprotein}
+For HVAK specific peaks, I expect the protein expression to decrease in KrasG12D samples. So LFC < 0.
+```{r}
+# HVAK
+# here we identify hit HVA-specific target proteins, p< 0.05, q < 0.1, LFC < 0
+protein_index <- c()
+for (i in 1:length(hvak_detected_proteome)) {
+  protein_index <- c(protein_index, grep(paste("^",hvak_detected_proteome[i],"$",sep = ""), proteom_de$Protein.Id))
+}
+hvak_target_proteom_de <- proteom_de[protein_index,]
+hvak_target_proteom_quant <- proteom_quant[protein_index,]
+
+hit_hvak_target_proteom_de <- subset(hvak_target_proteom_de, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1 & hvak_target_proteom_de$LFC < 0)
+hit_hvak_target_proteom_quant <- subset(hvak_target_proteom_quant, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1 & hvak_target_proteom_de$LFC < 0)
+dim(hit_hvak_target_proteom_de)[1]
+write.csv(hit_hvak_target_proteom_de, "Hit HVAK target proteins.csv")
+```
+
+Draw heatmaps of all HVAK-specific target proteins
+```{r}
+# zscore the quantifications
+for (i in 1:dim(hvak_target_proteom_quant)[1]) {
+   hvak_target_proteom_quant[i, 3:12]<- zscore(as.numeric(as.character(hvak_target_proteom_quant[i, 3:12])))
+}
+
+for (i in 1:dim(hit_hvak_target_proteom_quant)[1]) {
+   hit_hvak_target_proteom_quant[i, 3:12]<- zscore(as.numeric(as.character(hit_hvak_target_proteom_quant[i, 3:12])))
+}
+
+# Draw heatmap for all HEAP-target proteins
+heatmap_matrix <- as.matrix(hvak_target_proteom_quant[,3:12])
+png('All HVAK-specific target proteins.png',
+    width = 600,
+    height = 1200,
+    res = 200,
+    pointsize = 8)
+heatmap.2(heatmap_matrix,
+          main = "All HVAK specific\nHEAP target proteins",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_All HVAK-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "All HVAK specific\nHEAP target proteins",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for all HVAK-specific targets](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/All HVAK-specific target proteins.png)
+
+Draw heatmaps for hit HVAK protein targets that have p < 0.05, q < 0.1, and LFC < 0 
+```{r}
+# Draw heatmap for hit HVAK-target proteins that have p < 0.05, q < 0.1, and LFC < 0
+heatmap_matrix <- as.matrix(hit_hvak_target_proteom_quant[,3:12])
+png('Hit HVAK-specific target proteins.png',
+    width = 600,
+    height = 1400,
+    res = 200,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVAK specific\nHEAP target proteins\np<0.05,q<0.1,LFC<0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Hit HVAK-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVAK specific\nHEAP target proteins\np<0.05,q<0.1,LFC<0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for hit HVAK-specific targets](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Hit HVAK-specific target proteins.png)
+
+##### weird HVAK-specific targets
+It seems like that there are a group of HVAK-specific protein targets that somehow have upregulated protein expression. There seem to be a large number of them, even more than hit HVAK target proteins. I want to pull them out for further inspection.
+
+```{r}
+# here we identify weird HVA-specific target proteins, p< 0.05, q < 0.1, LFC > 0
+weird_hvak_target_proteom_de <- subset(hvak_target_proteom_de, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1 & hvak_target_proteom_de$LFC > 0)
+weird_hvak_target_proteom_quant <- subset(hvak_target_proteom_quant, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1 & hvak_target_proteom_de$LFC > 0)
+dim(weird_hvak_target_proteom_de)[1]
+write.csv(weird_hvak_target_proteom_de, "weird HVAK target proteins.csv")
+```
+
+Draw heatmaps for weird HVAK protein targets that have p < 0.05, q < 0.1, and LFC > 0 
+```{r}
+# Draw heatmap for hit HVAK-target proteins that have p < 0.05, q < 0.1, and LFC > 0
+heatmap_matrix <- as.matrix(weird_hvak_target_proteom_quant[,3:12])
+png('Weird HVAK-specific target proteins.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Weird HVAK specific\nHEAP target proteins\np<0.05,q<0.1,LFC>0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Weird HVAK-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Weird HVAK specific\nHEAP target proteins\np<0.05,q<0.1,LFC>0",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for weird HVAK-specific targets](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Weird HVAK-specific target proteins.png)
+
+##### DE HVAK-specific targets
+
+```{r}
+# here we identify HVAK-specific target proteins, p< 0.05, q < 0.1,
+de_hvak_target_proteom_de <- subset(hvak_target_proteom_de, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1)
+de_hvak_target_proteom_quant <- subset(hvak_target_proteom_quant, hvak_target_proteom_de$p_values<0.05 & hvak_target_proteom_de$q_values < 0.1)
+dim(de_hvak_target_proteom_de)[1]
+write.csv(de_hvak_target_proteom_de, "DE HVAK target proteins.csv")
+```
+
+Draw heatmaps for hit HVAK protein targets that have p < 0.05, q < 0.1
+```{r}
+# Draw heatmap for hit HVAK-target proteins that have p < 0.05, q < 0.1
+heatmap_matrix <- as.matrix(de_hvak_target_proteom_quant[,3:12])
+png('DE HVAK-specific target proteins.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "DE HVAK specific\nHEAP target proteins\np<0.05,q<0.1",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_DE HVAK-specific target proteins.pdf',
+    width = 6,
+    height = 10)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "DE HVAK specific\nHEAP target proteins\np<0.05,q<0.1",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+
+### Now lets take a look at transcriptomics
+Load the RNA-Seq data.
+```{r}
+rna_de <- read.csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/RNA-Seq/Mouse colon tumor/4-OHT enema model/Analysis/Differential Analysis_filtered.csv")
+rna_quant <- read.csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/RNA-Seq/Mouse colon tumor/4-OHT enema model/Analysis/normalized_raw_gene_counts_filtered.csv")
+```
+#### HVA-specific targets {#hvarna}
+How many of the HVA-specific targets are detected in transcriptomics?
+```{r}
+# check how many HVA-specific targets are detected in transcriptomics
+hva_detected_rna <- intersect(hva.uniq.peaks$GENEID, rna_quant$X)
+length(hva_detected_rna)
+
+rna_index <- c()
+for (i in 1:length(hva_detected_rna)){
+  rna_index <- c(rna_index, grep(hva_detected_rna[i], rna_quant$X))
+}
+
+hva_target_rna_quant <- rna_quant[rna_index,]
+hva_target_rna_de <- rna_de[rna_index,]
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(hva_target_rna_quant)[1]) {
+  hva_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(hva_target_rna_quant[i,2:17])))
+}
+
+```
+Draw the heapmat for all HVA target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(hva_target_rna_quant[,2:17])
+png('All HVA-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+heatmap.2(heatmap_matrix,
+          main = "All HVA specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_All HVA-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "All HVA specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for all HVA target RNA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/All HVA-specific target RNA.png)
+
+Examine the transcriptome of hit HVA-specific targets
+```{r}
+# Annotate hit HVA target proteome list with Ensembl ID.
+hit_hva_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hit_hva_target_proteom_de)[1]) {
+  u2e_index <- grep(hit_hva_target_proteom_de$Protein.Id[i], hva.uniq.peaks$UNIPROTID_Web)
+  hit_hva_target_proteom_de$Ensembl_ID[i] <- hva.uniq.peaks$GENEID[u2e_index[1]]
+}
+
+# check how many hit HEAP targets are detected in transcriptomics
+hit_hva_detected_rna <- intersect(hit_hva_target_proteom_de$Ensembl_ID, rna_quant$X)
+length(hit_hva_detected_rna)
+
+hit_rna_index <- c()
+for (i in 1:length(hit_hva_detected_rna)){
+  hit_rna_index <- c(hit_rna_index, grep(hit_hva_detected_rna[i], rna_quant$X))
+}
+
+hit_hva_target_rna_quant <- rna_quant[hit_rna_index,]
+hit_hva_target_rna_de <- rna_de[hit_rna_index,]
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(hit_hva_target_rna_quant)[1]) {
+  hit_hva_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(hit_hva_target_rna_quant[i,2:17])))
+}
+```
+
+Draw the heapmat for hit HVA-specific target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(hit_hva_target_rna_quant[,2:17])
+png('Hit HVA-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVA specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Hit HVA-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVA specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for hit HVA target RNA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Hit HVA-specific target RNA.png)
+
+#### HVAK-specific targets {#hvakrna}
+How many of the HVAK-specific targets are detected in transcriptomics?
+```{r}
+# check how many HVAK-specific targets are detected in transcriptomics
+hvak_detected_rna <- intersect(hvak.uniq.peaks$GENEID, rna_quant$X)
+length(hvak_detected_rna)
+
+rna_index <- c()
+for (i in 1:length(hvak_detected_rna)){
+  rna_index <- c(rna_index, grep(hvak_detected_rna[i], rna_quant$X))
+}
+
+hvak_target_rna_quant <- rna_quant[rna_index,]
+hvak_target_rna_de <- rna_de[rna_index,]
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(hvak_target_rna_quant)[1]) {
+  hvak_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(hvak_target_rna_quant[i,2:17])))
+}
+
+```
+Draw the heapmat for all HVA target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(hvak_target_rna_quant[,2:17])
+png('All HVAK-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+heatmap.2(heatmap_matrix,
+          main = "All HVAK specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_All HVAK-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "All HVAK specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for all HVAK target RNA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/All HVAK-specific target RNA.png)
+
+##### DE HvaK-specific targets {#hvakrna}
+```{r}
+# check how many HFK-specific targets are DE in transcriptomics
+de_hvak_target_rna_de <- hvak_target_rna_de %>% filter(padj < 0.05)
+de_hvak_target_rna_quant <- hvak_target_rna_quant[hvak_target_rna_quant$X %in% de_hvak_target_rna_de$X,]
+
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(de_hvak_target_rna_quant)[1]) {
+  de_hvak_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(de_hvak_target_rna_quant[i,2:17])))
+}
+
+```
+Draw the heapmat for all HVAK specific target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(de_hvak_target_rna_quant[,2:17])
+png('DE HVAK-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+heatmap.2(heatmap_matrix,
+          main = "DE HVAK specific\nHEAP target RNA\npadj<0.05",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_DE HVAK-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "DE HVAK specific\nHEAP target RNA\npadj<0.05",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+
+Examine the transcriptome of hit HVAK-specific targets
+```{r}
+# Annotate hit HVAK target proteome list with Ensembl ID.
+hit_hvak_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hit_hvak_target_proteom_de)[1]) {
+  u2e_index <- grep(hit_hvak_target_proteom_de$Protein.Id[i], hvak.uniq.peaks$UNIPROTID)
+  hit_hvak_target_proteom_de$Ensembl_ID[i] <- hvak.uniq.peaks$GENEID[u2e_index[1]]
+}
+
+# check how many hit HEAP targets are detected in transcriptomics
+hit_hvak_detected_rna <- intersect(hit_hvak_target_proteom_de$Ensembl_ID, rna_quant$X)
+length(hit_hvak_detected_rna)
+
+hit_rna_index <- c()
+for (i in 1:length(hit_hvak_detected_rna)){
+  hit_rna_index <- c(hit_rna_index, grep(hit_hvak_detected_rna[i], rna_quant$X))
+}
+
+hit_hvak_target_rna_quant <- rna_quant[hit_rna_index,]
+hit_hvak_target_rna_de <- rna_de[hit_rna_index,]
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(hit_hvak_target_rna_quant)[1]) {
+  hit_hvak_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(hit_hvak_target_rna_quant[i,2:17])))
+}
+```
+
+Draw the heapmat for hit HEAP target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(hit_hvak_target_rna_quant[,2:17])
+png('Hit HVAK-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVAK specific\nHEAP target RNA\npadj",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Hit HVAK-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "Hit HVAK specific\nHEAP target RNA\npadj",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for hit HVAK target RNA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Hit HVAK-specific target RNA.png)
+
+examine the transcriptome of werid HVAK-specific targets
+```{r}
+# Annotate hit HVAK target proteome list with Ensembl ID.
+weird_hvak_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(weird_hvak_target_proteom_de)[1]) {
+  u2e_index <- grep(weird_hvak_target_proteom_de$Protein.Id[i], hvak.uniq.peaks$UNIPROTID)
+  weird_hvak_target_proteom_de$Ensembl_ID[i] <- hvak.uniq.peaks$GENEID[u2e_index[1]]
+}
+
+# check how many hit HEAP targets are detected in transcriptomics
+weird_hvak_detected_rna <- intersect(weird_hvak_target_proteom_de$Ensembl_ID, rna_quant$X)
+length(weird_hvak_detected_rna)
+
+weird_rna_index <- c()
+for (i in 1:length(weird_hvak_detected_rna)){
+  weird_rna_index <- c(weird_rna_index, grep(weird_hvak_detected_rna[i], rna_quant$X))
+}
+
+weird_hvak_target_rna_quant <- rna_quant[weird_rna_index,]
+weird_hvak_target_rna_de <- rna_de[weird_rna_index,]
+
+# zscoring the RNA count quantifications
+for (i in 1:dim(weird_hvak_target_rna_quant)[1]) {
+  weird_hvak_target_rna_quant[i,2:17] <- zscore(as.numeric(as.character(weird_hvak_target_rna_quant[i,2:17])))
+}
+```
+
+Draw the heapmat for hit HEAP target transcriptome.
+```{r}
+heatmap_matrix <- as.matrix(weird_hvak_target_rna_quant[,2:17])
+png('Weird HVAK-specific target RNA.png',
+    width = 300,
+    height = 600,
+    res = 100,
+    pointsize = 8)
+par(cex.main = 1)
+heatmap.2(heatmap_matrix,
+          main = "Weird HVAK specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+
+pdf('PDF_figure/CLIP_visualization_09282019/Heatmap_Weird HVAK-specific target RNA.pdf',
+    width = 6,
+    height = 10)
+heatmap.2(heatmap_matrix,
+          main = "Weird HVAK specific\nHEAP target RNA",
+          density.info = "none",
+          key = TRUE,
+          lhei = c(1,7),
+          col=my_palette,
+          cexCol = 1,
+          margins = c(8,2),
+          trace = "none",
+          dendrogram = "row",
+          labRow = FALSE,
+          keysize = 2,
+          ylab = "Genes",
+          Colv = "NA")
+dev.off()
+```
+Final output is ![Heatmap for weird HVAK target RNA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Weird HVAK-specific target RNA.png)
+
+
+
+### Correlation between HEAP target proteomic and transcriptomics {#proteinrnacorr}
+Draw Venn Diagram to demonstrate the overlap between hit HVA and HVAK targets DE protein and DE RNA
+```{r}
+hit_hva_target_rna_sig <- subset(hit_hva_target_rna_de, hit_hva_target_rna_de$padj < 0.05 & hit_hva_target_rna_de$log2FoldChange > 0)
+dim(hit_hva_target_rna_sig)[1]
+
+hit_hvak_target_rna_sig <- subset(hit_hvak_target_rna_de, hit_hvak_target_rna_de$padj < 0.05 & hit_hvak_target_rna_de$log2FoldChange < 0)
+dim(hit_hvak_target_rna_sig)[1]
+
+# RNA and protein DE for HVA-specific targets
+grid.newpage()
+draw.pairwise.venn(dim(hit_hva_target_proteom_de)[1],
+                   dim(hit_hva_target_rna_sig)[1],
+                   dim(hit_hva_target_rna_sig)[1],
+                   catergory <- c("Hit HVA targets protein\np<0.05,q<0.1,LFC>0",
+                                  "Hit HVA targets RNA\npadj<0.05,LFC>0"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.05, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+
+pdf('PDF_figure/CLIP_visualization_09282019/Venn_HVA-specific target RNA-protein.pdf',
+    width = 8,
+    height = 6)
+draw.pairwise.venn(dim(hit_hva_target_proteom_de)[1],
+                   dim(hit_hva_target_rna_sig)[1],
+                   dim(hit_hva_target_rna_sig)[1],
+                   catergory <- c("Hit HVA targets protein\np<0.05,q<0.1,LFC>0",
+                                  "Hit HVA targets RNA\npadj<0.05,LFC>0"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.05, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+dev.off()
+
+# RNA and protein DE for HVAK-specific targets
+grid.newpage()
+draw.pairwise.venn(dim(hit_hvak_target_proteom_de)[1],
+                   dim(hit_hvak_target_rna_sig)[1],
+                   dim(hit_hvak_target_rna_sig)[1],
+                   catergory <- c("Hit HVAK targets protein\np<0.05,q<0.1,LFC<0",
+                                  "Hit HVAK targets RNA\npadj<0.05,LFC<0"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.05, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+
+pdf('PDF_figure/CLIP_visualization_09282019/Venn_ HVAK-specific target RNA-protein.pdf',
+    width = 8,
+    height = 6)
+draw.pairwise.venn(dim(hit_hvak_target_proteom_de)[1],
+                   dim(hit_hvak_target_rna_sig)[1],
+                   dim(hit_hvak_target_rna_sig)[1],
+                   catergory <- c("Hit HVAK targets protein\np<0.05,q<0.1,LFC<0",
+                                  "Hit HVAK targets RNA\npadj<0.05,LFC<0"),
+                   lty = "blank",
+                   ex.text = FALSE,
+                   fill = c("pink", "lightblue"),
+                   cat.pos = c(200, 135), cat.dist = 0.05, margin = 0.05,
+                   fontfamily = "sans", cat.fontfamily = "sans")
+dev.off()
+```
+
+Calculate the correlation coefficient between transcriptome and proteome for all HVA and HVAK targets.
+```{r}
+# annotate the HVA and HVAK proteome de analysis file with Ensembl ID.
+hva_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hva_target_proteom_de)[1]) {
+  de_index <- grep(hva_target_proteom_de$Protein.Id[i], hva.uniq.peaks$UNIPROTID_Web)
+  hva_target_proteom_de$Ensembl_ID[i] <- hva.uniq.peaks$GENEID[de_index[1]]
+}
+
+hvak_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hvak_target_proteom_de)[1]) {
+  de_index <- grep(hvak_target_proteom_de$Protein.Id[i], hvak.uniq.peaks$UNIPROTID)
+  hvak_target_proteom_de$Ensembl_ID[i] <- hvak.uniq.peaks$GENEID[de_index[1]]
+}
+
+# HVA
+## find out the overlap for HVA specific peaks
+overlap_hva <- intersect(hva_target_proteom_de$Ensembl_ID, hva_target_rna_de$X)
+hva_rna_lfc <- c()
+hva_protein_lfc <- c()
+hva_overlap_ID <- c()
+for (i in 1:length(overlap_hva)) {
+  rna_index <- grep(paste("^",overlap_hva[i],"$", sep=""), hva_target_rna_de$X)
+  protein_index <- grep(paste("^",overlap_hva[i],"$", sep=""), hva_target_proteom_de$Ensembl_ID)
+  if (length(protein_index) == 1) {
+      hva_rna_lfc <- c(hva_rna_lfc, hva_target_rna_de$log2FoldChange[rna_index])
+      hva_protein_lfc <- c(hva_protein_lfc, hva_target_proteom_de$LFC[protein_index])
+      hva_overlap_ID <- c(hva_overlap_ID, overlap_hva[i])
+  }
+}
+
+hva_overlap_lfc <- as.data.frame(cbind(hva_overlap_ID, hva_rna_lfc, hva_protein_lfc))
+rownames(hva_overlap_lfc) <- hva_overlap_lfc$hva_overlap_ID
+hva_overlap_lfc <- hva_overlap_lfc[,-1]
+hva_overlap_lfc$hva_rna_lfc <- as.numeric(as.character(hva_overlap_lfc$hva_rna_lfc))
+hva_overlap_lfc$hva_protein_lfc <- as.numeric(as.character(hva_overlap_lfc$hva_protein_lfc))
+
+## Plot scatterplot and calculate the Spearman Correlation
+ggplot(hva_overlap_lfc, aes(x = hva_rna_lfc, y = hva_protein_lfc)) +
+  geom_point(data = hva_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("All HVA-specific target RNA LFC") + ylab("All HVA-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVA-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_All HVA-specific target_RNA-protein.pdf",
+    height = 6,
+    width = 8)
+ggplot(hva_overlap_lfc, aes(x = hva_rna_lfc, y = hva_protein_lfc)) +
+  geom_point(data = hva_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("All HVA-specific target RNA LFC") + ylab("All HVA-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVA-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+dev.off()
+
+## Correlation test
+cor.test(hva_overlap_lfc$hva_rna_lfc, hva_overlap_lfc$hva_protein_lfc)
+
+# HVAK
+## find out the overlap for HVAK specific peaks
+overlap_hvak <- intersect(hvak_target_proteom_de$Ensembl_ID, hvak_target_rna_de$X)
+hvak_rna_lfc <- c()
+hvak_protein_lfc <- c()
+hvak_overlap_ID <- c()
+for (i in 1:length(overlap_hvak)) {
+  rna_index <- grep(paste("^",overlap_hvak[i],"$", sep=""), hvak_target_rna_de$X)
+  protein_index <- grep(paste("^",overlap_hvak[i],"$", sep=""), hvak_target_proteom_de$Ensembl_ID)
+  if (length(protein_index) == 1) {
+      hvak_rna_lfc <- c(hvak_rna_lfc, hvak_target_rna_de$log2FoldChange[rna_index])
+      hvak_protein_lfc <- c(hvak_protein_lfc, hvak_target_proteom_de$LFC[protein_index])
+      hvak_overlap_ID <- c(hvak_overlap_ID, overlap_hvak[i])
+  }
+}
+
+hvak_overlap_lfc <- as.data.frame(cbind(hvak_overlap_ID, hvak_rna_lfc, hvak_protein_lfc))
+rownames(hvak_overlap_lfc) <- hvak_overlap_lfc$hvak_overlap_ID
+hvak_overlap_lfc <- hvak_overlap_lfc[,-1]
+hvak_overlap_lfc$hvak_rna_lfc <- as.numeric(as.character(hvak_overlap_lfc$hvak_rna_lfc))
+hvak_overlap_lfc$hvak_protein_lfc <- as.numeric(as.character(hvak_overlap_lfc$hvak_protein_lfc))
+
+## Plot scatterplot and calculate the Spearman Correlation
+ggplot(hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hvak_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("All HVAK-specific target RNA LFC") + ylab("All HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_All HVAK-specific target_RNA-protein.pdf",
+    height = 6,
+    width = 8)
+ggplot(hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hvak_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("All HVAK-specific target RNA LFC") + ylab("All HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+dev.off()
+
+## Correlation test
+cor.test(hvak_overlap_lfc$hvak_rna_lfc, hvak_overlap_lfc$hvak_protein_lfc)
+```
+
+Examine the percentage of genes in each quadrant
+```{r}
+q1 <- dim(subset(hvak_overlap_lfc, hvak_rna_lfc < 0 & hvak_protein_lfc > 0))[1]/dim(hvak_overlap_lfc)[1]
+q2 <- dim(subset(hvak_overlap_lfc, hvak_rna_lfc > 0 & hvak_protein_lfc > 0))[1]/dim(hvak_overlap_lfc)[1]
+q3 <- dim(subset(hvak_overlap_lfc, hvak_rna_lfc < 0 & hvak_protein_lfc < 0))[1]/dim(hvak_overlap_lfc)[1]
+q4 <- dim(subset(hvak_overlap_lfc, hvak_rna_lfc > 0 & hvak_protein_lfc < 0))[1]/dim(hvak_overlap_lfc)[1]
+
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_All HVAK-specific target_RNA-protein_color by quadrant.pdf",
+    height = 6,
+    width = 8)
+ggplot(hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hvak_overlap_lfc, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(hvak_overlap_lfc, hvak_rna_lfc > 0 & hvak_protein_lfc > 0), alpha = 0.5, size = 1, color = "red") + 
+  geom_point(data = subset(hvak_overlap_lfc, hvak_rna_lfc < 0 & hvak_protein_lfc < 0), alpha = 0.5, size = 1, color = "blue") + 
+  xlab("All HVAK-specific target RNA LFC") + ylab("All HVAK-specific target protein LFC") + 
+  labs(title = paste0("Q1=", round(q1*100, digits = 2), "%; ", "Q2=", round(q2*100, digits = 2), "%; ","Q3=", round(q3*100, digits = 2), "%; ","Q4=", round(q4*100, digits = 2), "%; ")) +
+  xlim(-2,2) + ylim(-3,3) +
+  theme_bw() +
+      theme(panel.border = element_rect(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
+   geom_vline(xintercept = 0) +
+   geom_hline(yintercept = 0) 
+dev.off()
+```
+
+
+
+As that there is an enrichment of protein expression upregulation in HVAK-specific targets (as opposed to the expectation of enriched downregulation), I will plot this again, but with significantly increased and decreased protein annotated.
+```{r}
+# add p and q from proteomics and padj from RNA-Seq to the LFC dataset
+hvak_overlap_lfc$EnsemblID <- rownames(hvak_overlap_lfc)
+hvak_overlap_lfc <- as_tibble(hvak_overlap_lfc)
+hvak_overlap_lfc <- inner_join(hvak_overlap_lfc, hvak_target_proteom_de[,c(4,5,8)], by = c("EnsemblID"="Ensembl_ID"))
+hvak_overlap_lfc <- inner_join(hvak_overlap_lfc, hvak_target_rna_de[,c(1,7)], by = c("EnsemblID"="X"))
+
+# plot the graph
+ggplot(hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hvak_overlap_lfc, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data=subset(hvak_overlap_lfc, p_values < 0.05 & q_values < 0.1 & hvak_protein_lfc > 0), alpha = 0.5, size = 1, color = "red") + 
+  geom_point(data=subset(hvak_overlap_lfc, p_values < 0.05 & q_values < 0.1 & hvak_protein_lfc < 0), alpha = 0.5, size = 1, color = "blue") +
+  xlab("All HVAK-specific target RNA LFC") + ylab("All HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_All HVAK-specific target_RNA-protein_DEMarked.pdf",
+    height = 6,
+    width = 8)
+ggplot(hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hvak_overlap_lfc, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data=subset(hvak_overlap_lfc, p_values < 0.05 & q_values < 0.1 & hvak_protein_lfc > 0), alpha = 0.5, size = 1, color = "red") + 
+  geom_point(data=subset(hvak_overlap_lfc, p_values < 0.05 & q_values < 0.1 & hvak_protein_lfc < 0), alpha = 0.5, size = 1, color = "blue") +
+  xlab("All HVAK-specific target RNA LFC") + ylab("All HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for all HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+dev.off()
+```
+
+3 hypothesis regarding the paradoxical enrichment of upregulated proteins in HVAK-specific peaks
+    
+    1. This is coincidental, more genes that are targeted by miRNA just happen to be upregulated through other methods.
+    
+    2. miRNA targeting-induced gene activation (has been previously reported)
+    
+    3. miRNA targeting is actually an unsuccessful defense mechanism that the cells employed to suppress genes that are upregulated in the presence of mutant KRas.
+
+Calculate the correlation coefficient between transcriptome and proteome for hit HVA targets.
+```{r}
+# annotate the proteome de analysis file with Ensembl ID.
+hit_hva_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hit_hva_target_proteom_de)[1]) {
+  de_index <- grep(hit_hva_target_proteom_de$Protein.Id[i], hva.uniq.peaks$UNIPROTID_Web)
+  hit_hva_target_proteom_de$Ensembl_ID[i] <- hva.uniq.peaks$GENEID[de_index[1]]
+}
+
+hit_hvak_target_proteom_de$Ensembl_ID <- NA
+for (i in 1:dim(hit_hvak_target_proteom_de)[1]) {
+  de_index <- grep(hit_hvak_target_proteom_de$Protein.Id[i], hvak.uniq.peaks$UNIPROTID)
+  hit_hvak_target_proteom_de$Ensembl_ID[i] <- hvak.uniq.peaks$GENEID[de_index[1]]
+}
+
+# HVA
+## find out the overlap
+hit_hva_overlap <- intersect(hit_hva_target_proteom_de$Ensembl_ID, hit_hva_target_rna_de$X)
+hit_hva_rna_lfc <- c()
+hit_hva_protein_lfc <- c()
+hit_hva_overlap_ID <- c()
+for (i in 1:length(hit_hva_overlap)) {
+  hit_rna_index <- grep(paste("^",hit_hva_overlap[i],"$", sep=""), hit_hva_target_rna_de$X)
+  hit_protein_index <- grep(paste("^",hit_hva_overlap[i],"$", sep=""), hit_hva_target_proteom_de$Ensembl_ID)
+  if (length(hit_protein_index) == 1) {
+      hit_hva_rna_lfc <- c(hit_hva_rna_lfc, hit_hva_target_rna_de$log2FoldChange[hit_rna_index])
+      hit_hva_protein_lfc <- c(hit_hva_protein_lfc, hit_hva_target_proteom_de$LFC[hit_protein_index])
+      hit_hva_overlap_ID <- c(hit_hva_overlap_ID, hit_hva_overlap[i])
+  }
+}
+
+hit_hva_overlap_lfc <- as.data.frame(cbind(hit_hva_overlap_ID, hit_hva_rna_lfc, hit_hva_protein_lfc))
+rownames(hit_hva_overlap_lfc) <- hit_hva_overlap_lfc$hit_hva_overlap_ID
+hit_hva_overlap_lfc <- hit_hva_overlap_lfc[,-1]
+hit_hva_overlap_lfc$hit_hva_rna_lfc <- as.numeric(as.character(hit_hva_overlap_lfc$hit_hva_rna_lfc))
+hit_hva_overlap_lfc$hit_hva_protein_lfc <- as.numeric(as.character(hit_hva_overlap_lfc$hit_hva_protein_lfc))
+
+## Plot scatterplot and calculate the Spearman Correlation
+ggplot(hit_hva_overlap_lfc, aes(x = hit_hva_rna_lfc, y = hit_hva_protein_lfc)) +
+  geom_point(data = hit_hva_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("Hit HVA-specific target RNA LFC") + ylab("Hit HVA-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for hit HVA-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_Hit HVA-specific target_RNA-protein.pdf",
+    height = 6,
+    width = 8)
+ggplot(hit_hva_overlap_lfc, aes(x = hit_hva_rna_lfc, y = hit_hva_protein_lfc)) +
+  geom_point(data = hit_hva_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("Hit HVA-specific target RNA LFC") + ylab("Hit HVA-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for hit HVA-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+dev.off()
+
+## Correlation test
+cor.test(hit_hva_overlap_lfc$hit_hva_rna_lfc, hit_hva_overlap_lfc$hit_hva_protein_lfc)
+
+# HVAK
+## find out the overlap
+hit_hvak_overlap_lfc <- as.data.frame(hit_hvak_target_proteom_de$Ensembl_ID)
+colnames(hit_hvak_overlap_lfc) <- "Ensembl_ID"
+hit_hvak_overlap_lfc <- inner_join(hit_hvak_overlap_lfc, hvak_overlap_lfc, by = c("Ensembl_ID" = "EnsemblID"))
+
+## Plot scatterplot and calculate the Spearman Correlation
+ggplot(hit_hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hit_hvak_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("Hit HVAK-specific target RNA LFC") + ylab("Hit HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for hit HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Correlation_Hit HVAK-specific target_RNA-protein.pdf",
+    height = 6,
+    width = 8)
+ggplot(hit_hvak_overlap_lfc, aes(x = hvak_rna_lfc, y = hvak_protein_lfc)) +
+  geom_point(data = hit_hvak_overlap_lfc, alpha = 0.5, size = 1, color = "black") +
+  xlab("Hit HVAK-specific target RNA LFC") + ylab("Hit HVAK-specific target protein LFC") + 
+  labs(title = "Correlation between proteomics and transcriptomics for hit HVAK-specific targets") +
+  xlim(-3,3) + ylim(-3,3)
+dev.off()
+
+## Correlation test
+cor.test(hit_hvak_overlap_lfc$hvak_rna_lfc, hit_hvak_overlap_lfc$hvak_protein_lfc)
+
+```
+
+### Identify peaks associated with Hit HVA and HVAK targets and weird HVAK targets
+```{r}
+# HVA
+hit_hva_peak_index <- c()
+for (i in 1:dim(hit_hva_target_proteom_de)[1]) {
+  hit_hva_peak_index <- c(hit_hva_peak_index, grep(hit_hva_target_proteom_de$Ensembl_ID[i], hva.uniq.peaks$GENEID))
+}
+hit_hva_peak_list <- hva.uniq.peaks[hit_hva_peak_index,]
+
+# HVAK
+hit_hvak_peak_index <- c()
+for (i in 1:dim(hit_hvak_target_proteom_de)[1]) {
+  hit_hvak_peak_index <- c(hit_hvak_peak_index, grep(hit_hvak_target_proteom_de$Ensembl_ID[i], hvak.uniq.peaks$GENEID))
+}
+hit_hvak_peak_list <- hvak.uniq.peaks[hit_hvak_peak_index,]
+
+# weird HVAK peaks
+weird_hvak_peak_index <- c()
+for (i in 1:dim(weird_hvak_target_proteom_de)[1]) {
+  weird_hvak_peak_index <- c(weird_hvak_peak_index, grep(weird_hvak_target_proteom_de$Ensembl_ID[i], hvak.uniq.peaks$GENEID))
+}
+weird_hvak_peak_list <- hvak.uniq.peaks[weird_hvak_peak_index,]
+```
+
+## Putative miRNA candidates for HEAP targets
+### Kmer enrichment analysis {#kmerenrichment}
+All analysis is done based on identification of 6mer since nt2-7 position is absolutely essential for miRNA targeting.
+
+Load miRBase mature miRNA fa file and mm10 genome
+```{r}
+mirnas <- readRNAStringSet("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/mature.fa")
+mirnas <- DNAStringSet(mirnas[grepl("mmu-", names(mirnas))])
+names(mirnas) <- sapply(strsplit(names(mirnas), " "), "[", 1)
+names(mirnas) <- substring(names(mirnas), first = 5)
+bsgenome <- load.bsgenome("mm10")
+```
+
+Now we look for enriched 6mers/7mers/8mers in HEAP peaks.
+
+#### Overlap peaks {#overlapkmer}
+First we look at that are the enriched kmers in the overlapping peaks between HVA and HVAK. These are the miRNA targeting no affected by mutant KRas.
+```{r}
+# get the table of overlap peaks
+overlap.peaks <- as.data.frame(peaks.overlap)
+
+# define functions
+associateKmerWithMiRNA <- function(kmer, mirnas, in.seed = TRUE,
+                                   collapse = TRUE) {
+  occurrences <- unlist(vmatchPattern(reverseComplement(DNAString(kmer)),
+                                      mirnas))
+  if (in.seed) {
+    occurrences <- occurrences[end(occurrences) <= 8]
+  }
+  mirna.names <- sort(names(occurrences))
+  if (collapse) {
+    mirna.names <- paste0(mirna.names, collapse = ",")
+  }
+  return(mirna.names)
+}
+
+findEnrichedKmersPeaks <- function(peaks, kmer.background, k = 6, n = 50) {
+  enriched.kmers <- findKmerEnrich(peaks, k = k, genomeTag = "mm10",
+                                   kmer.background = kmer.background)[1:n]
+  enriched.kmers <-
+    data.table(kmer = names(enriched.kmers),
+               enrich = enriched.kmers,
+               miR = sapply(names(enriched.kmers),
+                            associateKmerWithMiRNA, mirnas = mirnas))
+  enriched.kmers
+}
+
+# establish proper background
+# for the overlapping peaks, background is all peaks detected in HVA and HVAK samples, disregarding padj
+peaks.all.only.hva <- peaks.all.hva[!peaks.all.hva %over% peaks.all.hvak,]
+all.peaks <- c(peaks.all.only.hva, peaks.all.hvak)
+
+# calculate all the kmer backgrounds
+k6.background.overlap <- calculateKmerBackground(k=6, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+k7.background.overlap <- calculateKmerBackground(k=7, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+k8.background.overlap <- calculateKmerBackground(k=8, genomeTag = "mm10", gr.overlap = all.peaks,
+                                         exons.only = TRUE)
+
+# 6mer
+overlap.peaks.k6 <- findEnrichedKmersPeaks(peaks.overlap, k6.background.overlap, k=6)
+ggplot(overlap.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in HVA/HVAK overlapped peaks")
+overlap.peaks.k6[1:10,]
+
+# 7mers
+overlap.peaks.k7 <- findEnrichedKmersPeaks(peaks.overlap, k7.background.overlap, k=7)
+ggplot(overlap.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in HVA/HVAK overlapped peaks")
+overlap.peaks.k7[1:10,]
+
+# 8mers
+overlap.peaks.k8 <- findEnrichedKmersPeaks(peaks.overlap, k8.background.overlap, k=8)
+ggplot(overlap.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in HVA/HVAK overlapped peaks")
+overlap.peaks.k8[1:10,]
+```
+
+As a sanity check, we need to compare the above enrichment with enrichment of k-mers in whole transcript sequences (because the composition of peak position is ~50% 3'UTR, ~30% exon and ~20% intron).
+```{r}
+findEnrichedKmersSeqs <- function(seqs, kmer.background, k = 6, n = 50) {
+  enriched.kmers <- findKmerEnrich(gr.seq = seqs, k = k, genomeTag = "mm10",
+                                   kmer.background = kmer.background)[1:n]
+  enriched.kmers <-
+    data.table(kmer = names(enriched.kmers),
+               enrich = enriched.kmers,
+               miR = sapply(names(enriched.kmers),
+                            associateKmerWithMiRNA, mirnas = mirnas))
+  enriched.kmers
+}
+
+mm10.annot <- loadAnnot("mm10")
+mm10.transcript <- transcriptsBy(mm10.annot$txdb)
+mm10.transcript <- unlist(mm10.transcript)
+mm10.withpeaks <- subsetByOverlaps(mm10.transcript, all.peaks)
+mm10.withpeaks.seq <- get.seqs(bsgenome, mm10.withpeaks)
+
+# 6mer
+transcript.overlap.k6 <- findEnrichedKmersSeqs(mm10.withpeaks.seq, k6.background.overlap)
+ggplot(transcript.overlap.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Enriched 6mers in all transcripts with peaks")
+
+# 7mer
+transcript.overlap.k7 <- findEnrichedKmersSeqs(mm10.withpeaks.seq, k7.background.overlap, k=7)
+ggplot(transcript.overlap.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Enriched 7mers in all transcripts with peaks")
+
+# 8mer
+transcript.overlap.k8 <- findEnrichedKmersSeqs(mm10.withpeaks.seq, k8.background.overlap, k=8)
+ggplot(transcript.overlap.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Enriched 8mers in all transcripts with peaks")
+```
+
+HOMER Run on 7mer motifs
+```{r}
+findKmerWindows <- function(kmers, peaks,
+                            peaks.seq) {
+    sapply(kmers,
+           function(kmer) {
+               positions <- findKmerPositions(gr.seq = peaks.seq, kmer = kmer)
+               positions <- mapPositionsToGenome(positions, peaks)
+               positions
+           },
+           simplify = FALSE)
+}
+
+prepareHOMERinput <- function(kmer.results, peaks, peaks.seq, filename.tag,
+                              n.kmers = 50, width = 15) {
+    kmer.positions <- findKmerWindows(kmer.results[1:n.kmers, kmer], peaks = peaks, peaks.seq = peaks.seq)
+    kmer.positions <- unlist(GRangesList(kmer.positions))
+    kmer.positions <- resize(kmer.positions, fix = "center", width = width)
+    kmer.positions <- GenomicRanges::reduce(kmer.positions)
+    kmer.positions.filename <-
+        sprintf("Kmer/%s-peaks-k7-windows.bed", filename.tag)
+    rtracklayer::export(kmer.positions, kmer.positions.filename)
+    print("info on k-mer positions (count and width distribution):")
+    print(length(kmer.positions))
+    print(summary(width(kmer.positions)))
+    
+    kmer.background <-
+        c(shift(kmer.positions, 100),
+          shift(kmer.positions, 200),
+          shift(kmer.positions, -100),
+          shift(kmer.positions, -200))
+    kmer.background <- GenomicRanges::reduce(kmer.background)
+    kmer.background <- kmer.background[kmer.background %outside% peaks]
+    print("info on background positions (count and width distribution):")
+    print(length(kmer.background))
+    print(summary(width(kmer.background)))
+    kmer.background.filename <-
+        sprintf("Kmer//%s-peaks-k7-windows-background.bed",
+                filename.tag)
+    rtracklayer::export(kmer.background, kmer.background.filename)
+}
+```
+
+```{r}
+overlap.peaks.seq <- get.seqs(bsgenome, peaks.overlap)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = overlap.peaks.k7, 
+                  peaks = peaks.overlap, 
+                  peaks.seq = overlap.peaks.seq,
+                  filename.tag = "overlap",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/overlap-peaks-k7-windows.bed"
+background.regions <- "Kmer/overlap-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-overlap-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+
+print(homer.cmd)
+```
+
+```{r}
+print.miRNA.Motif.HOMER <- function(mirna.table, file, score = 6) {
+    # write motif to file according to HOMER format
+    tmp <- apply(mirna.table, 1, function(x) {
+        mirna.id <- x["MiRBase.ID"]
+        mirna.family <- x["miR.family"]
+        mirna.seq <- x["seed"]
+        mirna.name <- sprintf("%s (%s)", mirna.family, mirna.id)
+        mirna.seq.df <- as.data.frame(strsplit(mirna.seq, "")[[1]])
+        colnames(mirna.seq.df) <- "char"
+        mirna.seq.df$A <- ifelse(mirna.seq.df$char == "A", 0.997, 0.001)
+        mirna.seq.df$C <- ifelse(mirna.seq.df$char == "C", 0.997, 0.001)
+        mirna.seq.df$G <- ifelse(mirna.seq.df$char == "G", 0.997, 0.001)
+        mirna.seq.df$T <- ifelse(mirna.seq.df$char == "T", 0.997, 0.001)
+        mirna.seq.mat <- as.matrix(mirna.seq.df[2:5])
+        write(sprintf(">%s\t%s\t%s", mirna.seq, mirna.name, score), file,
+              append = TRUE)
+        write.table(format(mirna.seq.mat, digits = 4), file, sep = "\t",
+                    quote = FALSE, row.names = FALSE, col.names = FALSE,
+                    append = TRUE)
+    })
+}
+```
+Define functions that will do the parsing and plotting of the results.
+
+```{r}
+plotHomerResults <- function(homer.table, homer.pwms, n.motifs = 20) {
+    ncol <- 4
+    laymat <- matrix(1:((1 + n.motifs) * ncol), ncol = ncol, byrow = FALSE)
+    logos.list <- lapply(homer.pwms[1:n.motifs],
+                         function(pwm) {
+                             ggseqlogo(pwm) +
+                                 theme(axis.text.x = element_blank(),
+                                       axis.title.y = element_blank(),
+                                       axis.line.y =
+                                           element_line(color = "gray"),
+                                       axis.ticks.y =
+                                           element_line(color = "gray")) +
+                                 ylim(0, 2)
+                         })
+    ranks.text <- sapply(homer.table$Rank[1:n.motifs], textGrob,
+                         simplify = FALSE)
+    pval.text <- sapply(sprintf("%.0f", -homer.table$log10.p)[1:n.motifs],
+                        textGrob, simplify = FALSE)
+    targ.text <- sapply(homer.table$freq.targets[1:n.motifs], textGrob,
+                        simplify = FALSE)
+    bg.text <- sapply(homer.table$freq.bg[1:n.motifs], textGrob,
+                      simplify = FALSE)
+    tf.text <- sapply(homer.table$best.match.simple[1:n.motifs], textGrob,
+                      simplify = FALSE)
+    headers <- sapply(c("rank", "motif", "-log10\np-value",
+                        "freq.\ntargets", "freq.\nbackgr.",
+                        "best match"),
+                      textGrob,
+                      simplify = FALSE)
+    all.plots <- c(headers[1], ranks.text,
+                   headers[2], logos.list,
+                   headers[3], pval.text,
+                   # headers[4], targ.text,
+                   # headers[5], bg.text,
+                   headers[6], tf.text)
+    grid.arrange(grobs = all.plots, layout_matrix = laymat,
+                 # widths = c(1, 4, 1, 1, 1, 3),
+                 widths = c(1, 4, 1, 3),
+                 ncol = ncol)
+}
+
+loadPWM <- function(filename) {
+    motif <- fread(filename, skip = 1)
+    if (nrow(motif) > 0) {
+        pwm <- t(as.matrix(as.data.frame(motif)))
+        rownames(pwm) <- c("A", "C", "G", "U")
+        pwm
+    } else {
+        NULL
+    }
+}
+
+loadHomerResults <- function(dirname) {
+    # also allow version="extended" for motifs without stringent
+    #   similarity filtering
+    homer.table <-
+        html_nodes(read_html(sprintf("%s/homerResults.html", dirname)), "table")
+    homer.table <- html_table(homer.table, header = TRUE)[[1]]
+    homer.table <- data.table(homer.table, check.names = TRUE)
+    homer.table <- homer.table[, .(Rank,
+                                   log10.p = log.P.pvalue / log(10),
+                                   freq.targets = X..of.Targets,
+                                   freq.bg = X..of.Background,
+                                   best.match = Best.Match.Details)]
+    homer.table[, filename := sprintf("%s/homerResults/motif%s.motif",
+                                      dirname, seq_along(Rank))]
+    homer.pwms <- sapply(homer.table$filename, loadPWM, simplify = FALSE)
+    list(homer.table, homer.pwms)
+}
+```
+
+```{r fig.height=10, fig.width=6}
+overlap.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(overlap.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-17-5p/20-5p/93-5p/\n106-5p/519-3p/526-3p", "miR-200", "miR-29", "miR-194", "miR-25-3p/32-5p/92-3p/\n363-3p/367-3p", "miR-24-3p", "miR-23-3p/130a-5p", "miR-19-3p", "AG repeat", "miR-210-3p", "hsa-miR-3679-3")
+overlap.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(overlap.peaks.homer.res[[1]],
+                 overlap.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_overlap_peaks.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(overlap.peaks.homer.res[[1]],
+                 overlap.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+
+#### HVA peaks {#hvakmer}
+##### All HVA peaks
+Now we look at that are the enriched kmers in the all HVA peaks.
+```{r}
+# calculate all the kmer backgrounds
+k6.background.hva <- calculateKmerBackground(k=6, genomeTag = "mm10", gr.overlap = peaks.all.hva,
+                                         exons.only = TRUE)
+k7.background.hva <- calculateKmerBackground(k=7, genomeTag = "mm10", gr.overlap = peaks.all.hva,
+                                         exons.only = TRUE)
+k8.background.hva <- calculateKmerBackground(k=8, genomeTag = "mm10", gr.overlap = peaks.all.hva,
+                                         exons.only = TRUE)
+
+# 6mer
+hva.peaks.k6 <- findEnrichedKmersPeaks(hva.peaks, k6.background.hva, k=6)
+ggplot(hva.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in all HVA peaks")
+hva.peaks.k6[1:10,]
+
+# 7mers
+hva.peaks.k7 <- findEnrichedKmersPeaks(hva.peaks, k7.background.hva, k=7)
+ggplot(hva.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in all HVA peaks")
+hva.peaks.k7[1:10,]
+
+# 8mers
+hva.peaks.k8 <- findEnrichedKmersPeaks(hva.peaks, k8.background.hva, k=8)
+ggplot(hva.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in all HVA peaks")
+hva.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=10, fig.width=6}
+all.hva.peaks.seq <- get.seqs(bsgenome, peaks.all.hva)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hva.peaks.k7, 
+                  peaks = peaks.all.hva, 
+                  peaks.seq = all.hva.peaks.seq,
+                  filename.tag = "all.hva",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/all.hva-peaks-k7-windows.bed"
+background.regions <- "Kmer/all.hva-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-all.hva-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+all.hva.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(all.hva.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-17-5p/20-5p/93-5p/\n106-5p/519-3p/526-3p", "miR-200", "miR-29", "miR-194", "miR-25-3p/32-5p/92-3p/\n363-3p/367-3p", "miR-24-3p", "miR-23-3p/130a-5p", "miR-19-3p", "miR-4713-5p", "miR-4315")
+all.hva.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(all.hva.peaks.homer.res[[1]],
+                 all.hva.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_all_HVA_peaks.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(all.hva.peaks.homer.res[[1]],
+                 all.hva.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+##### All HVA-specific peaks
+```{r}
+# 6mer
+hva.specific.peaks.k6 <- findEnrichedKmersPeaks(hva.specific.peaks, k6.background.hva, k=6)
+ggplot(hva.specific.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in all HVA-specific peaks")
+hva.specific.peaks.k6[1:10,]
+
+# 7mers
+hva.specific.peaks.k7 <- findEnrichedKmersPeaks(hva.specific.peaks, k7.background.hva, k=7)
+ggplot(hva.specific.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in all HVA-specific peaks")
+hva.specific.peaks.k7[1:10,]
+
+# 8mers
+hva.specific.peaks.k8 <- findEnrichedKmersPeaks(hva.specific.peaks, k8.background.hva, k=8)
+ggplot(hva.specific.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in all HVA-specific peaks")
+hva.specific.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=4, fig.width=6}
+hva.specific.peaks.seq <- get.seqs(bsgenome, hva.specific.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hva.specific.peaks.k7, 
+                  peaks = hva.specific.peaks, 
+                  peaks.seq = hva.specific.peaks.seq,
+                  filename.tag = "hva.specific",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/hva.specific-peaks-k7-windows.bed"
+background.regions <- "Kmer/hva.specific-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-hva.specific-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+hva.specific.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hva.specific.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("hsa-miR-1248", "hsa-miR-4279", "hsa-miR-31")
+hva.specific.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hva.specific.peaks.homer.res[[1]],
+                 hva.specific.peaks.homer.res[[2]], n.motifs = 3)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_HVA_specific_peaks.pdf",
+    width = 6,
+    height = 8)
+plotHomerResults(hva.specific.peaks.homer.res[[1]],
+                 hva.specific.peaks.homer.res[[2]], n.motifs = 3)
+dev.off()
+```
+This is not very meaningful because of the small number of HVA-specific peaks.
+
+
+##### Hit HVA-specific peaks
+```{r}
+# obtain GRanges subjects for hit HVA peaks
+hit.hva.index <- c()
+for (i in 1:length(hit_hva_peak_list$name)) {
+  hit.hva.index <- c(hit.hva.index, grep(paste("^", hit_hva_peak_list$name[i], "$", sep =""), hva.specific.peaks$name))
+}
+
+hva.hit.peaks <- hva.specific.peaks[hit.hva.index]
+
+# 6mer
+hva.hit.peaks.k6 <- findEnrichedKmersPeaks(hva.hit.peaks, k6.background.hva, k=6)
+ggplot(hva.hit.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in hit HVA-specific peaks")
+hva.hit.peaks.k6[1:10,]
+
+# 7mers
+hva.hit.peaks.k7 <- findEnrichedKmersPeaks(hva.hit.peaks, k7.background.hva, k=7)
+ggplot(hva.hit.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in hit HVA-specific peaks")
+hva.hit.peaks.k7[1:10,]
+
+# 8mers
+hva.hit.peaks.k8 <- findEnrichedKmersPeaks(hva.hit.peaks, k8.background.hva, k=8)
+ggplot(hva.hit.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in hit HVA-specific peaks")
+hva.hit.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=8, fig.width=8}
+hva.hit.peaks.seq <- get.seqs(bsgenome, hva.hit.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hva.hit.peaks.k7, 
+                  peaks = hva.hit.peaks, 
+                  peaks.seq = hva.hit.peaks.seq,
+                  filename.tag = "hva.hit",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/hva.hit-peaks-k7-windows.bed"
+background.regions <- "Kmer/hva.hit-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-hva.hit-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+hva.hit.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hva.hit.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("hsa-miR-593", "hsa-miR-1281", "hsa-miR-1237", "hsa-miR-4530", "hsa-miR-3686")
+hva.hit.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hva.hit.peaks.homer.res[[1]],
+                 hva.hit.peaks.homer.res[[2]], n.motifs = 5)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_hit_HVA_peaks.pdf",
+    width = 6,
+    height = 6)
+plotHomerResults(hva.hit.peaks.homer.res[[1]],
+                 hva.hit.peaks.homer.res[[2]], n.motifs = 5)
+dev.off()
+```
+
+This is also not that meaningful due to the small number of hit-HVA peaks.
+
+##### Background kmer enrichment in transcripts with HVA peaks
+As a sanity check, we need to compare the above enrichment with enrichment of k-mers in whole transcript sequences (because the composition of peak position is ~50% 3'UTR, ~30% exon and ~20% intron).
+```{r}
+mm10.withpeaks.hva <- subsetByOverlaps(mm10.transcript, peaks.all.hva)
+mm10.withpeaks.hva.seq <- get.seqs(bsgenome, mm10.withpeaks.hva)
+
+# 6mer
+transcript.hva.k6 <- findEnrichedKmersSeqs(mm10.withpeaks.hva.seq, k6.background.hva)
+ggplot(transcript.hva.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 6mers in all transcripts with HVA peaks")
+
+# 7mer
+transcript.hva.k7 <- findEnrichedKmersSeqs(mm10.withpeaks.hva.seq, k7.background.hva, k=7)
+ggplot(transcript.hva.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 7mers in all transcripts with HVA peaks")
+
+# 8mer
+transcript.hva.k8 <- findEnrichedKmersSeqs(mm10.withpeaks.hva.seq, k8.background.hva, k=8)
+ggplot(transcript.hva.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 8mers in all transcripts with HVA peaks")
+```
+
+#### HVAK peaks {#hvakkmer}
+##### All HVAK peaks
+Now we look at that are the enriched kmers in the all HVAK peaks.
+```{r}
+# calculate all the kmer backgrounds
+k6.background.hvak <- calculateKmerBackground(k=6, genomeTag = "mm10", gr.overlap = peaks.all.hvak,
+                                         exons.only = TRUE)
+k7.background.hvak <- calculateKmerBackground(k=7, genomeTag = "mm10", gr.overlap = peaks.all.hvak,
+                                         exons.only = TRUE)
+k8.background.hvak <- calculateKmerBackground(k=8, genomeTag = "mm10", gr.overlap = peaks.all.hvak,
+                                         exons.only = TRUE)
+
+# 6mer
+hvak.peaks.k6 <- findEnrichedKmersPeaks(hvak.peaks, k6.background.hvak, k=6)
+ggplot(hvak.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in all HVAK peaks")
+hvak.peaks.k6[1:10,]
+
+# 7mers
+hvak.peaks.k7 <- findEnrichedKmersPeaks(hvak.peaks, k7.background.hvak, k=7)
+ggplot(hvak.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in all HVAK peaks")
+hvak.peaks.k7[1:10,]
+
+# 8mers
+hvak.peaks.k8 <- findEnrichedKmersPeaks(hvak.peaks, k8.background.hvak, k=8)
+ggplot(hvak.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in all HVAK peaks")
+hvak.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=10, fig.width=6}
+all.hvak.peaks.seq <- get.seqs(bsgenome, hvak.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hvak.peaks.k7, 
+                  peaks = hvak.peaks, 
+                  peaks.seq = all.hvak.peaks.seq,
+                  filename.tag = "all.hvak",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/all.hvak-peaks-k7-windows.bed"
+background.regions <- "Kmer/all.hvak-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-all.hvak-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+all.hvak.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(all.hvak.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-29", "miR-17-5p/20-5p/93-5p/\n106-5p/519-3p/526-3p", "miR-200/429", "miR-194", "miR-24-3p", "miR-25-3p/32-5p/92-3p/\n363-3p/367-3p", "miR-26-5p/1297/4465", "miR-19-3p", "miR-3183/4723-3p/6769-3p", "miR-603", "miR-4714-3p", "miR-210-3p")
+all.hvak.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(all.hvak.peaks.homer.res[[1]],
+                 all.hvak.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_all_HVAK_peaks.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(all.hvak.peaks.homer.res[[1]],
+                 all.hvak.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+##### All HVAK-specific peaks
+```{r}
+# 6mer
+hvak.specific.peaks.k6 <- findEnrichedKmersPeaks(hvak.specific.peaks, k6.background.hvak, k=6)
+ggplot(hvak.specific.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in all HVAK-specific peaks")
+hvak.specific.peaks.k6[1:10,]
+
+# 7mers
+hvak.specific.peaks.k7 <- findEnrichedKmersPeaks(hvak.specific.peaks, k7.background.hvak, k=7)
+ggplot(hvak.specific.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in all HVAK-specific peaks")
+hvak.specific.peaks.k7[1:10,]
+
+# 8mers
+hvak.specific.peaks.k8 <- findEnrichedKmersPeaks(hvak.specific.peaks, k8.background.hvak, k=8)
+ggplot(hvak.specific.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in all HVAK-specific peaks")
+hvak.specific.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=10, fig.width=6}
+hvak.specific.peaks.seq <- get.seqs(bsgenome, hvak.specific.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hvak.specific.peaks.k7, 
+                  peaks = hvak.specific.peaks, 
+                  peaks.seq = hvak.specific.peaks.seq,
+                  filename.tag = "hvak.specific",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/hvak.specific-peaks-k7-windows.bed"
+background.regions <- "Kmer/hvak.specific-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-hvak.specific-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+hvak.specific.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hvak.specific.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-29", "miR-17-5p/20-5p/93-5p/\n106-5p/519-3p/526-3p", "miR-200/429", "miR-194", "miR-24-3p", "miR-26-5p/1297/4465", "miR-25-3p/32-5p/92-3p/\n363-3p/367-3p", "miR-19-3p", "AG repeat", "hsa-miR-3615", "hsa-miR-4468", "hsa-miR-603", "hsa-miR-3162-3p", "hsa-miR-2113")
+hvak.specific.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hvak.specific.peaks.homer.res[[1]],
+                 hvak.specific.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_HVAK_specific_peaks.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(hvak.specific.peaks.homer.res[[1]],
+                 hvak.specific.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+##### Hit HVAK-specific peaks
+```{r}
+# obtain GRanges subjects for hit HVA peaks
+hit.hvak.index <- c()
+for (i in 1:length(hit_hvak_peak_list$name)) {
+  hit.hvak.index <- c(hit.hvak.index, grep(paste("^", hit_hvak_peak_list$name[i], "$", sep =""), hvak.specific.peaks$name))
+}
+
+hvak.hit.peaks <- hvak.specific.peaks[hit.hvak.index]
+
+# 6mer
+hvak.hit.peaks.k6 <- findEnrichedKmersPeaks(hvak.hit.peaks, k6.background.hvak, k=6)
+ggplot(hvak.hit.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in hit HVAK-specific peaks")
+hvak.hit.peaks.k6[1:10,]
+
+# 7mers
+hvak.hit.peaks.k7 <- findEnrichedKmersPeaks(hvak.hit.peaks, k7.background.hvak, k=7)
+ggplot(hvak.hit.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in hit HVAK-specific peaks")
+hvak.hit.peaks.k7[1:10,]
+
+# 8mers
+hvak.hit.peaks.k8 <- findEnrichedKmersPeaks(hvak.hit.peaks, k8.background.hvak, k=8)
+ggplot(hvak.hit.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in hit HVAK-specific peaks")
+hvak.hit.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=10, fig.width=6}
+hvak.hit.peaks.seq <- get.seqs(bsgenome, hvak.hit.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hvak.hit.peaks.k7, 
+                  peaks = hvak.hit.peaks, 
+                  peaks.seq = hvak.hit.peaks.seq,
+                  filename.tag = "hvak.hit",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/hvak.hit-peaks-k7-windows.bed"
+background.regions <- "Kmer/hvak.hit-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-hvak.hit-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+hvak.hit.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hvak.hit.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("miR-29", "miR-194", "miR-484/3155", "miR-17-5p/20-5p/93-5p/\n106-5p/519-3p/526-3p", "let-7/miR-98", "miR-205-5p", "miR-26-5p/1297/4465", "miR-302a-5p", "miR-329-3p/362-3p", "miR-3201/4791", "miR-4690-5p")
+hvak.hit.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hvak.hit.peaks.homer.res[[1]],
+                 hvak.hit.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_hit_HVAK_peaks.pdf",
+    width = 6,
+    height = 8)
+plotHomerResults(hvak.hit.peaks.homer.res[[1]],
+                 hvak.hit.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+##### Weird HVAK-specific peaks
+```{r}
+# obtain GRanges subjects for hit HVA peaks
+weird.hvak.index <- c()
+for (i in 1:length(weird_hvak_peak_list$name)) {
+  weird.hvak.index <- c(weird.hvak.index, grep(paste("^", weird_hvak_peak_list$name[i], "$", sep =""), hvak.specific.peaks$name))
+}
+
+hvak.weird.peaks <- hvak.specific.peaks[weird.hvak.index]
+
+# 6mer
+hvak.weird.peaks.k6 <- findEnrichedKmersPeaks(hvak.weird.peaks, k6.background.hvak, k=6)
+ggplot(hvak.weird.peaks.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 6mers in weird HVAK-specific peaks")
+hvak.weird.peaks.k6[1:10,]
+
+# 7mers
+hvak.weird.peaks.k7 <- findEnrichedKmersPeaks(hvak.weird.peaks, k7.background.hvak, k=7)
+ggplot(hvak.weird.peaks.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 7mers in weird HVAK-specific peaks")
+hvak.weird.peaks.k7[1:10,]
+
+# 8mers
+hvak.weird.peaks.k8 <- findEnrichedKmersPeaks(hvak.weird.peaks, k8.background.hvak, k=8)
+ggplot(hvak.weird.peaks.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(peaks / background)") +
+  labs(title = "Enriched 8mers in weird HVAK-specific peaks")
+hvak.weird.peaks.k8[1:10,]
+```
+
+HOMER run
+```{r fig.height=10, fig.width=6}
+hvak.weird.peaks.seq <- get.seqs(bsgenome, hvak.weird.peaks)
+
+## HOMER run of K7 kmer
+prepareHOMERinput(kmer.results = hvak.weird.peaks.k7, 
+                  peaks = hvak.weird.peaks, 
+                  peaks.seq = hvak.weird.peaks.seq,
+                  filename.tag = "hvak.weird",
+                  n.kmers = 50,
+                  width = 15)
+
+
+genomic.regions <- "Kmer/hvak.weird-peaks-k7-windows.bed"
+background.regions <- "Kmer/hvak.weird-peaks-k7-windows-background.bed"
+homerdir <- "Kmer/homer-denovo-output-hvak.weird-peaks-k7"
+dir.create(homerdir, showWarnings = FALSE)
+homer.cmd <- sprintf("findMotifsGenome.pl %s mm10 %s -bg %s -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000 >.homer-output 2>.err.homer-output",
+                     genomic.regions, homerdir, background.regions)
+## Run in terminal
+## system(homer.cmd)
+print(homer.cmd)
+
+hvak.weird.peaks.homer.res <- loadHomerResults(homerdir)
+human.mirnas <-
+    sapply(strsplit(hvak.weird.peaks.homer.res[[1]]$best.match, " "), "[", 1)
+print(human.mirnas)
+
+mouse.mirnas <- c("let-7/miR-98", "miR-29", "miR-519-3p", "miR-200/429", "AG repeat", "miR-25-3p/32-5p/92-3p/\n363-3p/367-3p", "miR-142-5p/5590-3p", "miR-21-5p/590-5p", "miR-3941", "miR-194")
+hvak.weird.peaks.homer.res[[1]]$best.match.simple <- mouse.mirnas
+plotHomerResults(hvak.weird.peaks.homer.res[[1]],
+                 hvak.weird.peaks.homer.res[[2]], n.motifs = 8)
+
+pdf("PDF_figure/CLIP_visualization_09282019/Homer_weird_HVAK_peaks.pdf",
+    width = 6,
+    height = 10)
+plotHomerResults(hvak.weird.peaks.homer.res[[1]],
+                 hvak.weird.peaks.homer.res[[2]], n.motifs = 8)
+dev.off()
+```
+
+##### Background kmer enrichment in transcripts with HVAK peaks
+As a sanity check, we need to compare the above enrichment with enrichment of k-mers in whole transcript sequences (because the composition of peak position is ~50% 3'UTR, ~30% exon and ~20% intron).
+```{r}
+mm10.withpeaks.hvak <- subsetByOverlaps(mm10.transcript, peaks.all.hvak)
+mm10.withpeaks.hvak.seq <- get.seqs(bsgenome, mm10.withpeaks.hvak)
+
+# 6mer
+transcript.hvak.k6 <- findEnrichedKmersSeqs(mm10.withpeaks.hvak.seq, k6.background.hvak)
+ggplot(transcript.hvak.k6[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 6mers in all transcripts with HVAK peaks")
+
+# 7mer
+transcript.hvak.k7 <- findEnrichedKmersSeqs(mm10.withpeaks.hvak.seq, k7.background.hvak, k=7)
+ggplot(transcript.hvak.k7[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 7mers in all transcripts with HVAK peaks")
+
+# 8mer
+transcript.hvak.k8 <- findEnrichedKmersSeqs(mm10.withpeaks.hvak.seq, k8.background.hvak, k=8)
+ggplot(transcript.hvak.k8[1:10, ],
+       aes(x = reorder(kmer, enrich), y = enrich)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Frequency\nlog2(transcript / background)") +
+  labs(title = "Background enriched 8mers in all transcripts with HVAK peaks")
+```
+
+#### Associate kmer to peaks {#kmerassociate}
+Associate all HVA and HVAK specific HEAP peaks to miRNAs
+```{r}
+# HVA
+hva.specific.peak.seq <- get.seqs(bsgenome, hva.specific.peaks)
+
+hva.peak.info <- as.data.frame(hva.specific.peaks)
+hva.peak.info$targeting_mirna_6mer<- NA
+hva.peak.info$targeting_mirna_7mer<- NA
+hva.peak.info$targeting_mirna_8mer<- NA
+
+# 6mer
+for (i in 1:dim(hva.specific.peaks.k6)[1]) {
+  six_mer <- DNAString(hva.specific.peaks.k6$kmer[i])
+  mindex <- vmatchPattern(six_mer, hva.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hva.peak.info$targeting_mirna_6mer[n])) {
+        hva.peak.info$targeting_mirna_6mer[n] <- hva.specific.peaks.k6$miR[i]
+      }
+      else {
+        hva.peak.info$targeting_mirna_6mer[n] <- paste(hva.peak.info$targeting_mirna_6mer[n], hva.specific.peaks.k6$miR[i], sep="")
+      }
+    }
+  }
+}
+
+# 7mer
+for (i in 1:dim(hva.specific.peaks.k7)[1]) {
+  seven_mer <- DNAString(hva.specific.peaks.k7$kmer[i])
+  mindex <- vmatchPattern(seven_mer, hva.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hva.peak.info$targeting_mirna_7mer[n])) {
+        hva.peak.info$targeting_mirna_7mer[n] <- hva.specific.peaks.k7$miR[i]
+      }
+      else {
+        hva.peak.info$targeting_mirna_7mer[n] <- paste(hva.peak.info$targeting_mirna_7mer[n], hva.specific.peaks.k7$miR[i], sep="")
+      }
+    }
+  }
+}
+
+# 8mer
+for (i in 1:dim(hva.specific.peaks.k8)[1]) {
+  eight_mer <- DNAString(hva.specific.peaks.k8$kmer[i])
+  mindex <- vmatchPattern(eight_mer, hva.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hva.peak.info$targeting_mirna_8mer[n])) {
+        hva.peak.info$targeting_mirna_8mer[n] <- hva.specific.peaks.k8$miR[i]
+      }
+      else {
+        hva.peak.info$targeting_mirna_8mer[n] <- paste(hva.peak.info$targeting_mirna_8mer[n], hva.specific.peaks.k8$miR[i], sep="")
+      }
+    }
+  }
+}
+
+write.csv(hva.peak.info, "HVA_uniq_peak_mirna_match.csv")
+
+# HVAK
+hvak.specific.peak.seq <- get.seqs(bsgenome, hvak.specific.peaks)
+
+hvak.peak.info <- as.data.frame(hvak.specific.peaks)
+hvak.peak.info$targeting_mirna_6mer<- NA
+hvak.peak.info$targeting_mirna_7mer<- NA
+hvak.peak.info$targeting_mirna_8mer<- NA
+
+# 6mer
+for (i in 1:dim(hvak.specific.peaks.k6)[1]) {
+  six_mer <- DNAString(hvak.specific.peaks.k6$kmer[i])
+  mindex <- vmatchPattern(six_mer, hvak.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hvak.peak.info$targeting_mirna_6mer[n])) {
+        hvak.peak.info$targeting_mirna_6mer[n] <- hvak.specific.peaks.k6$miR[i]
+      }
+      else {
+        hvak.peak.info$targeting_mirna_6mer[n] <- paste(hvak.peak.info$targeting_mirna_6mer[n], hvak.specific.peaks.k6$miR[i], sep="")
+      }
+    }
+  }
+}
+
+# 7mer
+for (i in 1:dim(hvak.specific.peaks.k7)[1]) {
+  seven_mer <- DNAString(hvak.specific.peaks.k7$kmer[i])
+  mindex <- vmatchPattern(seven_mer, hvak.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hvak.peak.info$targeting_mirna_7mer[n])) {
+        hvak.peak.info$targeting_mirna_7mer[n] <- hvak.specific.peaks.k7$miR[i]
+      }
+      else {
+        hvak.peak.info$targeting_mirna_7mer[n] <- paste(hvak.peak.info$targeting_mirna_7mer[n], hvak.specific.peaks.k7$miR[i], sep="")
+      }
+    }
+  }
+}
+
+# 8mer
+for (i in 1:dim(hvak.specific.peaks.k8)[1]) {
+  eight_mer <- DNAString(hvak.specific.peaks.k8$kmer[i])
+  mindex <- vmatchPattern(eight_mer, hvak.specific.peak.seq)
+  nmatch_per_seq <- elementNROWS(mindex)
+  for (n in 1:length(nmatch_per_seq)) {
+    if (nmatch_per_seq[n] > 0) {
+      if (is.na(hvak.peak.info$targeting_mirna_8mer[n])) {
+        hvak.peak.info$targeting_mirna_8mer[n] <- hvak.specific.peaks.k8$miR[i]
+      }
+      else {
+        hvak.peak.info$targeting_mirna_8mer[n] <- paste(hvak.peak.info$targeting_mirna_8mer[n], hvak.specific.peaks.k8$miR[i], sep="")
+      }
+    }
+  }
+}
+
+write.csv(hvak.peak.info, "HVAK_uniq_peak_mirna_match.csv")
+
+```
+
+Match hit HEAP targets with corresponding miRNAs
+```{r}
+# HVA
+hit_hva_mirna_index <- c()
+for (i in 1:dim(hit_hva_peak_list)[1]) {
+  hit_hva_mirna_index <- c(hit_hva_mirna_index, grep(paste("^", hit_hva_peak_list$name[i], "$", sep = ""), hva.peak.info$name))
+}
+hit_hva_target_miRNA <- hva.peak.info[hit_hva_mirna_index,]
+write.csv(hit_hva_target_miRNA, "hit_HVA_mirna_match.csv")
+
+# HVAK
+hit_hvak_mirna_index <- c()
+for (i in 1:dim(hit_hvak_peak_list)[1]) {
+  hit_hvak_mirna_index <- c(hit_hvak_mirna_index, grep(paste("^", hit_hvak_peak_list$name[i], "$", sep = ""), hvak.peak.info$name))
+}
+hit_hvak_target_miRNA <- hvak.peak.info[hit_hvak_mirna_index,]
+write.csv(hit_hvak_target_miRNA, "hit_HVAK_mirna_match.csv")
+
+```
+Match weird HVAK targets with corresponding miRNAs
+```{r}
+werid_hvak_mirna_index <- c()
+for (i in 1:dim(weird_hvak_peak_list)[1]) {
+  werid_hvak_mirna_index <- c(werid_hvak_mirna_index, grep(paste("^", weird_hvak_peak_list$name[i], "$", sep = ""), hvak.peak.info$name))
+}
+weird_hvak_target_miRNA <- hvak.peak.info[werid_hvak_mirna_index,]
+write.csv(weird_hvak_target_miRNA, "weird_HVAK_mirna_match.csv")
+
+```
+
+#### Cross-analysis of kmers enriched in HVA and HVAK samples
+I want to find out what are the kmers that are only enriched in HVA samples or only enriched in HVAK samples.
+
+I am only using the 7mer analysis result for HVA and HVAK specific peaks here. I will expand later.
+
+```{r}
+# Specific peaks
+hva_specific_7mer <- as.data.frame(setdiff(hva.specific.peaks.k7$kmer, hvak.specific.peaks.k7$kmer))
+colnames(hva_specific_7mer)[1] <- "HVA_specific_7mer"
+hvak_specific_7mer <- as.data.frame(setdiff(hvak.specific.peaks.k7$kmer, hva.specific.peaks.k7$kmer))
+colnames(hvak_specific_7mer)[1] <- "HVAK_specific_7mer"
+
+hva_specific_7mer <- inner_join(hva_specific_7mer, hva.specific.peaks.k7, by = c("HVA_specific_7mer" = "kmer"))
+
+hvak_specific_7mer <- inner_join(hvak_specific_7mer, hvak.specific.peaks.k7, by = c("HVAK_specific_7mer" = "kmer"))
+
+# output the results into csv files
+write_csv(hva_specific_7mer, "HVA_specific_7mer.csv")
+write_csv(hvak_specific_7mer, "HVAK_specific_7mer.csv")
+
+# hit peaks
+hva_hit_7mer <- as.data.frame(setdiff(hva.hit.peaks.k7$kmer, hvak.hit.peaks.k7$kmer))
+colnames(hva_hit_7mer)[1] <- "HVA_hit_7mer"
+hvak_hit_7mer <- as.data.frame(setdiff(hvak.hit.peaks.k7$kmer, hva.hit.peaks.k7$kmer))
+colnames(hvak_hit_7mer)[1] <- "HVAK_hit_7mer"
+
+hva_hit_7mer <- inner_join(hva_hit_7mer, hva.hit.peaks.k7, by = c("HVA_hit_7mer" = "kmer"))
+
+hvak_hit_7mer <- inner_join(hvak_hit_7mer, hvak.hit.peaks.k7, by = c("HVAK_hit_7mer" = "kmer"))
+
+# output the results into csv files
+write_csv(hva_hit_7mer, "HVA_hit_7mer.csv")
+write_csv(hvak_hit_7mer, "HVAK_hit_7mer.csv")
+```
+Overlap this with the list of miRNAs that are up/down-regulated by KRas in the literature that I compiled.
+
+#### Cross-analysis of kmers enriched in hit HVAK and weird HVAK samples 
+I want to see if there are kmers that are unique to the weird HVAK peaks.
+```{r}
+# Specific peaks
+weird_hvak_specific_7mer <- as.data.frame(setdiff(hvak.weird.peaks.k7$kmer, hvak.hit.peaks.k7$kmer))
+colnames(weird_hvak_specific_7mer)[1] <- "weird_HVAK_specific_7mer"
+
+weird_hvak_specific_7mer <- inner_join(weird_hvak_specific_7mer, hvak.weird.peaks.k7, by = c("weird_HVAK_specific_7mer" = "kmer"))
+
+# output the results into csv files
+write_csv(weird_hvak_specific_7mer, "Weird_HVAK_specific_7mer.csv")
+```
+
+
+### Overlap all peaks with TargetScan predicted targets {#targetscan}
+For all peaks detected in the HVA and HVAK HEAP-CLIP analysis with a padj < 0.05.
+```{r}
+# get a GRanges object that have all peaks with padj < 0.05
+sig.peaks <- subset(all.peaks, padj < padj.threshold)
+
+# load TargetScan predictions
+targetscan.all <- import("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Predicted_Targets/Targets_CS_pctiles.mm10.sorted.broadConsFam.consSite.bed")
+targetscan.all$miR <- sapply(strsplit(targetscan.all$name, ":"), "[", 2)
+targetscan.all$gene <-sapply(strsplit(targetscan.all$name, ":"), "[", 1)
+targetscan <- subset(targetscan.all, score > 50)
+targetscan <- subset(targetscan, width > 1 & width < 12)
+sig.peaks.targetscan <- subset(targetscan, overlapsAny(targetscan, sig.peaks))
+sig.peaks.targetscan.count <- as.data.frame(sort(table(sig.peaks.targetscan$miR),
+                                                  decreasing = TRUE))
+ggplot(sig.peaks.targetscan.count, aes(x = Var1, y = Freq)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Number of TargetScan predictions\noverlapping with significant HEAP-CLIP peaks") +
+  scale_x_discrete(limits = rev(levels(sig.peaks.targetscan.count$Var1)))
+
+pdf("PDF_figure/CLIP_visualization_09282019/Overlap_with_TargetScan.pdf",
+    width = 6,
+    height = 5)
+ggplot(sig.peaks.targetscan.count, aes(x = Var1, y = Freq)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Number of TargetScan predictions\noverlapping with significant HEAP-CLIP peaks") +
+  scale_x_discrete(limits = rev(levels(sig.peaks.targetscan.count$Var1)))
+dev.off()
+
+# what percentage of all peaks are predicted by TargetScan
+paste(sum(sig.peaks.targetscan.count$Freq)/length(sig.peaks)*100, "%", sep = "")
+```
+For hit HEAP peaks detected in the HEAP-CLIP analysis with a padj < 0.05 and with decreased protein expression in the proteomics
+```{r}
+all.hit.peaks <- c(hva.hit.peaks, hvak.hit.peaks)
+all.hit.peaks.targetscan <- subset(targetscan, overlapsAny(targetscan, all.hit.peaks))
+all.hit.eaks.targetscan.count <- as.data.frame(sort(table(all.hit.peaks.targetscan$miR),
+                                                  decreasing = TRUE))
+ggplot(all.hit.eaks.targetscan.count, aes(x = Var1, y = Freq)) +
+  geom_col() + coord_flip() + theme_bw() + xlab("") +
+  ylab("Number of TargetScan predictions\noverlapping with all hit HEAP peaks") +
+  scale_x_discrete(limits = rev(levels(all.hit.eaks.targetscan.count$Var1)))
+
+# what percentage of all hit peaks are predicted by TargetScan
+paste(sum(all.hit.eaks.targetscan.count$Freq)/length(all.hit.peaks)*100, "%", sep = "")
+```
+
+## GO Analysis
+### Load libraries necessary for the analysis
+```{r message=FALSE, warning=FALSE}
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+library(readr)
+library(dplyr)
+library(clusterProfiler)
+library(DOSE)
+library(pathview)
+```
+### Generate reference files as input for GO analysis {#goreference}
+In order to perform GO analysis, I need to generate a universe file that contain all peaks detected in HVA and HVAK with their targets Ensembl ID. 
+```{r}
+all.peaks.go <- as.data.frame(all.peaks, row.names = NULL)
+
+# annotate the list with potential target gene and Ensembl ID
+all.peaks.go$'target_gene' <- NA
+for (i in 1:dim(all.peaks.go)) {
+  if (!is.na(all.peaks.go[i,12]) | !is.na(all.peaks.go[i,13])) {
+    gene_name <- unique(unlist(all.peaks.go[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    all.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(all.peaks.go[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    all.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+all_gene_list <- as.data.frame(table(all.peaks.go$target_gene))
+
+# Ensembl IDs are annotated using `EnsDb.Mmusculus.v79` package since that is the one that I used for RNA-Seq analysis
+annotations_all <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(all_gene_list$Var1),
+                                           columns = c("GENEID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_all$GENENAME) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_all$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_all <- annotations_all[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_all$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID and Uniprot ID from BioMart
+all.peaks.go <- inner_join(all.peaks.go, annotations_all, by=c("target_gene"="GENENAME"))
+
+# how many genes have Ensembl ID
+sum(!is.na(annotations_all$GENEID))
+```
+
+### Overlap targets {#overlapgo}
+```{r}
+detected_gene <- as.character(unique(all.peaks.go$GENEID))
+
+# annotate the list with potential target gene and Ensembl ID
+overlap.peaks$'target_gene' <- NA
+for (i in 1:dim(overlap.peaks)) {
+  if (!is.na(overlap.peaks[i,12]) | !is.na(overlap.peaks[i,13])) {
+    gene_name <- unique(unlist(overlap.peaks[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    overlap.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(overlap.peaks[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    overlap.peaks$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+overlap_gene_list <- as.data.frame(table(overlap.peaks$target_gene))
+# annotate the overlap peak list with Ensembl ID
+annotations_overlap <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(overlap_gene_list$Var1),
+                                           columns = c("GENEID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_overlap$GENENAME) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_overlap$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_overlap <- annotations_overlap[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_overlap$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID and Uniprot ID from BioMart
+overlap.peaks <- inner_join(overlap.peaks, annotations_overlap, by=c("target_gene"="GENENAME"))
+
+# GO analysis
+target_gene <- as.character(unique(overlap.peaks$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/Overlap_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/Overlap_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/Overlap_GO analysis_CC.csv")
+```
+
+### HVA {#hvago}
+#### all HVA
+```{r}
+hva.peaks.go <- as.data.frame(hva.peaks)
+# annotate the list with potential target gene and Ensembl ID
+hva.peaks.go$'target_gene' <- NA
+for (i in 1:dim(hva.peaks.go)) {
+  if (!is.na(hva.peaks.go[i,12]) | !is.na(hva.peaks.go[i,13])) {
+    gene_name <- unique(unlist(hva.peaks.go[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    hva.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(hva.peaks.go[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    hva.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+hva_gene_list <- as.data.frame(table(hva.peaks.go$target_gene))
+# annotate the overlap peak list with Ensembl ID
+annotations_hva_all <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(hva_gene_list$Var1),
+                                           columns = c("GENEID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_hva_all$GENENAME) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_hva_all$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_hva_all <- annotations_hva_all[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_hva_all$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID and Uniprot ID from BioMart
+hva.peaks.go <- inner_join(hva.peaks.go, annotations_hva_all, by=c("target_gene"="GENENAME"))
+
+# GO analysis
+target_gene <- as.character(unique(hva.peaks.go$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/HVA_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/HVA_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/HVA_GO analysis_CC.csv")
+```
+
+#### HVA-specific
+```{r}
+# GO analysis
+target_gene <- as.character(unique(hva.uniq.peaks$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/HVA_specific_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/HVA_specific_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/HVA_specific_GO analysis_CC.csv")
+```
+
+### HVAK {#hvakgo}
+#### all HVAK
+```{r}
+hvak.peaks.go <- as.data.frame(hvak.peaks)
+# annotate the list with potential target gene and Ensembl ID
+hva.peaks.go$'target_gene' <- NA
+for (i in 1:dim(hvak.peaks.go)) {
+  if (!is.na(hvak.peaks.go[i,12]) | !is.na(hvak.peaks.go[i,13])) {
+    gene_name <- unique(unlist(hvak.peaks.go[i,12:13]))
+    gene_name <- gene_name[!is.na(gene_name)] 
+    hvak.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+  }
+  else {
+    gene_name <- unique(unlist(hvak.peaks.go[i,8:11]))
+    gene_name <- gene_name[!is.na(gene_name)]
+    if (length(gene_name) >0) {
+    hvak.peaks.go$'target_gene'[i] <- paste(unlist(gene_name), collapse = " ")
+    }
+  }
+}
+
+hvak_gene_list <- as.data.frame(table(hvak.peaks.go$target_gene))
+# annotate the overlap peak list with Ensembl ID
+annotations_hvak_all <- AnnotationDbi::select(EnsDb.Mmusculus.v79,
+                                           keys = as.character(hvak_gene_list$Var1),
+                                           columns = c("GENEID"),
+                                           keytype = "GENENAME")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_hvak_all$GENENAME) == FALSE)
+non_duplicates_idx <- which(duplicated(annotations_hvak_all$GENEID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_hvak_all <- annotations_hvak_all[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_hvak_all$GENENAME) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Ensembl ID and Uniprot ID from BioMart
+hvak.peaks.go <- inner_join(hvak.peaks.go, annotations_hvak_all, by=c("target_gene"="GENENAME"))
+
+# GO analysis
+target_gene <- as.character(unique(hvak.peaks.go$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/HVAK_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/HVAK_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/HVAK_GO analysis_CC.csv")
+```
+
+#### HVAK-specific
+```{r}
+# GO analysis
+target_gene <- as.character(unique(hvak.uniq.peaks$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/HVAK_specific_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/HVAK_specific_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/HVAK_specific_GO analysis_CC.csv")
+```
+
+No biological function and cellular component terms were enriched.
+
+##### Biological Processes
+```{r}
+png('GO Analysis/HVAK_specific_GO dotplot_BP.png',
+    width = 1200,
+    height = 1200,
+    res = 100,
+    pointsize = 8)
+dotplot(ego_BP, showCategory=50)
+dev.off()
+```
+Final output for Molecular Function is ![BP_dotplot](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GO Analysis/HVAK_specific_GO dotplot_BP.png)
+
+#### hit HVAK
+```{r}
+# GO analysis
+target_gene <- as.character(unique(hit_hvak_peak_list$GENEID))
+
+# Run GO enrichment analysis for biological process
+ego_BP <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "BP", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_BP <- data.frame(ego_BP)
+
+write.csv(cluster_summary_BP, "GO Analysis/HVAK_hit_GO analysis_BP.csv")
+
+# Run GO enrichment analysis for molecular function 
+ego_MF <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "MF", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_MF <- data.frame(ego_MF)
+
+write.csv(cluster_summary_MF, "GO Analysis/HVAK_hit_GO analysis_MF.csv")
+
+# Run GO enrichment analysis for cellular component 
+ego_CC <- enrichGO(gene = target_gene, 
+                universe = detected_gene,
+                keyType = "ENSEMBL",
+                OrgDb = org.Mm.eg.db, 
+                ont = "CC", 
+                pAdjustMethod = "BH", 
+                pvalueCutoff = 0.05, 
+                readable = TRUE)
+
+# Output results from GO analysis to a table
+cluster_summary_CC <- data.frame(ego_CC)
+
+write.csv(cluster_summary_CC, "GO Analysis/HVAK_hit_GO analysis_CC.csv")
+```
+
+##### Biological Process
+```{r}
+png('GO Analysis/HVAK_hit_GO dotplot_BP.png',
+    width = 1200,
+    height = 1200,
+    res = 100,
+    pointsize = 8)
+dotplot(ego_BP, showCategory=50)
+dev.off()
+```
+Final output for Biological Process is ![BP_dotplot](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GO Analysis/HVAK_hit_GO dotplot_BP.png)
+
+
+##### Molecular Function
+```{r}
+png('GO Analysis/HVAK_hit_GO dotplot_MF.png',
+    width = 1200,
+    height = 1200,
+    res = 100,
+    pointsize = 8)
+dotplot(ego_MF, showCategory=50)
+dev.off()
+```
+Final output for Molecular Function is ![MF_dotplot](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GO Analysis/HVAK_hit_GO dotplot_MF.png)
+
+
+##### Cellular Component
+```{r}
+png('GO Analysis/HVAK_hit_GO dotplot_CC.png',
+    width = 1200,
+    height = 1200,
+    res = 100,
+    pointsize = 8)
+dotplot(ego_CC, showCategory=50)
+dev.off()
+```
+Final output for Molecular Function is ![CC_dotplot](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GO Analysis/HVAK_hit_GO dotplot_CC.png)
+
+## Session Info
+```{r}
+sessionInfo()
+```

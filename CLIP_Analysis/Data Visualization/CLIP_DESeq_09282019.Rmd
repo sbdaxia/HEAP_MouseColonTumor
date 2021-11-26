@@ -1,0 +1,552 @@
+---
+title: "CLIP_DESeq_09282019"
+author: "Bing Shui"
+date: "11/28/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Library Loading for the analysis
+```{r}
+suppressMessages(
+suppressWarnings(
+  c(library(data.table),
+    library(tidyverse),
+    library(rtracklayer),
+    library(DESeq2),
+    library(Biostrings),
+    library(Rsubread),
+    library(pheatmap),
+    library(gridExtra),
+    library(ggrepel),
+    library(CLIPanalyze),
+    library(ggplot2),
+    library(RColorBrewer),
+    library(mixOmics),
+    library(plotly))
+  )
+)
+```
+
+## Filtering of all peaks
+Load the `rds` file from all samples CLIP analysis and use MA plot to visuaize that sequence depth are balanced between CLIP and IC libraries, and the peaks that were called.
+```{r}
+peak.data<- readRDS("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/joint_analysis/peakdata.2019-12-04.rds")
+
+plotMA(peak.data$gene.counts.nopeaks,
+       main = "MA plot for all HEAP vs IC\n in genes outside peaks")
+
+plotMA(peak.data$res.deseq,
+       main = "MA plot for all HEAP vs IC in peaks,\none-sided test")
+```
+
+Prepare the peak, assign scores to KRas peaks by adjusted p-value.
+```{r}
+peaks.all <- peak.data$peaks
+peaks.all <- subset(peaks.all, width > 20)
+peaks.all <- subset(peaks.all, log2FC > 0)
+peaks.all <- keepStandardChromosomes(peaks.all)
+score(peaks.all) <- -log10(peaks.all$padj)
+length(peaks.all)
+summary(width(peaks.all))
+
+count.threshold <- 10
+norm.counts <- counts(peak.data$peak.counts, normalized = TRUE)
+norm.counts <- norm.counts[names(peaks.all), ]
+colnames(norm.counts)[1:12] <- c(paste0("HVA", 1:6), paste0("HVAK", 1:6))
+colnames(norm.counts)[13:24] <- c(paste0("HVA-IC", 1:6), paste0("HVAK-IC", 1:6))
+selected.peaks <- (rowMeans(norm.counts[, paste0("HVA", 1:6)]) > count.threshold) |
+    (rowMeans(norm.counts[, paste0("HVAK", 1:6)]) > count.threshold)
+peaks.all <- peaks.all[selected.peaks, ]
+
+length(peaks.all)
+summary(width(peaks.all))
+
+peaks.all.overlaps <- peak.data[[2]]
+peaks.all.overlaps <-
+    peaks.all.overlaps[name %in% names(peaks.all)]
+peaks.all.lncRNA <-
+    peaks.all.overlaps[gene_type %in% c("lincRNA", "antisense",
+                                              "processed_transcript")]
+peaks.all.lncRNA.arbitrary <- peaks.all.lncRNA[, .(name, gene_name)]
+peaks.all.lncRNA.arbitrary <-
+    unique(peaks.all.lncRNA.arbitrary, by = "name")
+peaks.all$lncRNA <- as.character(NA)
+peaks.all[peaks.all.lncRNA.arbitrary$name, ]$lncRNA <-
+    peaks.all.lncRNA.arbitrary$gene_name
+peaks.all$annot <- ifelse(is.na(peaks.all$lncRNA),
+                                peaks.all$annot,
+                                "lncRNA")
+
+padj.threshold <- 0.05
+filter.peaks <- subset(peaks.all, padj < padj.threshold)
+score(filter.peaks) <- -log10(filter.peaks$padj)
+length(filter.peaks)
+summary(width(filter.peaks))
+
+# HVA peak filtering
+peak.data.hva <-
+    peak.data$peak.counts
+colnames(peak.data.hva) <- c(paste0("HVA", 1:6), paste0("HVAK", 1:6), paste0("HVA-IC", 1:6), paste0("HVAK-IC", 1:6))
+peak.data.hva <-
+    peak.data.hva[names(peaks.all),
+                          c("HVA1", "HVA2", "HVA3", "HVA4", "HVA5", "HVA6", 
+                            "HVA-IC1", "HVA-IC2", "HVA-IC3", "HVA-IC4", "HVA-IC5", "HVA-IC6")]
+colData(peak.data.hva)$batch <- factor(c('1','1','1','2','2','2','1','1','1','2','2','2'))
+design(peak.data.hva) <- ~ batch + condition
+
+peak.data.hva <- DESeq(peak.data.hva)
+plotMA(peak.data.hva,
+       main = "MA plot for HVA over input\nin all peaks",
+       xlab = "Mean of normalized counts")
+
+res.hva <- results(peak.data.hva)
+
+peaks.all$hva.padj <- as.numeric(NA)
+peaks.all$hva.log2FC <- as.numeric(NA)
+peaks.all[rownames(res.hva), ]$hva.padj <-
+    res.hva$padj
+peaks.all[rownames(res.hva), ]$hva.log2FC <-
+    res.hva$log2FoldChange
+
+peaks.hva <- subset(peaks.all,
+                    padj < padj.threshold & log2FC > 0 &
+                    hva.padj < padj.threshold &
+                    hva.log2FC > 0)
+score(peaks.hva) <- -log10(peaks.hva$hva.padj)
+length(peaks.hva)
+
+length(subsetByOverlaps(peaks.hva, filter.peaks))
+
+summary(width(peaks.hva))
+```
+
+```{r}
+peak.data.hvak <-
+    peak.data$peak.counts
+colnames(peak.data.hvak) <- c(paste0("HVA", 1:6), paste0("HVAK", 1:6), paste0("HVA-IC", 1:6), paste0("HVAK-IC", 1:6))
+peak.data.hvak <-
+    peak.data.hvak[names(peaks.all),
+                          c("HVAK1", "HVAK2", "HVAK3", "HVAK4", "HVAK5", "HVAK6",
+                            "HVAK-IC1", "HVAK-IC2", "HVAK-IC3", "HVAK-IC4", "HVAK-IC5", "HVAK-IC6")]
+colData(peak.data.hvak)$batch <- factor(c('1','1','1','2','2','2','1','1','1','2','2','2'))
+design(peak.data.hvak) <- ~ batch + condition
+
+peak.data.hvak <- DESeq(peak.data.hvak)
+plotMA(peak.data.hvak,
+       main = "MA plot for HVAK over input\nin all peaks",
+       xlab = "Mean of normalized counts")
+
+res.hvak <- results(peak.data.hvak)
+
+peaks.all$hvak.padj <- as.numeric(NA)
+peaks.all$hvak.log2FC <- as.numeric(NA)
+peaks.all[rownames(res.hvak), ]$hvak.padj <-
+    res.hvak$padj
+peaks.all[rownames(res.hvak), ]$hvak.log2FC <-
+    res.hvak$log2FoldChange
+
+peaks.hvak <- subset(peaks.all,
+                    padj < padj.threshold & log2FC > 0 &
+                    hvak.padj < padj.threshold &
+                    hvak.log2FC > 0)
+score(peaks.hvak) <- -log10(peaks.hvak$hvak.padj)
+length(peaks.hvak)
+
+length(subsetByOverlaps(peaks.hvak, filter.peaks))
+
+summary(width(peaks.hvak))
+```
+```{r}
+# for genes inside peaks
+colnames(peak.data$peak.counts)[1:12] <- c(paste0("HVA", 1:6), paste0("HVAK", 1:6))
+dds.hvak.hva <-
+    peak.data$peak.counts[names(filter.peaks),
+                                    c(paste0("HVA", 1:6), paste0("HVAK", 1:6))]
+dds.hvak.hva$sampletype <-
+    factor(c(rep("HVA", 6), rep("HVAK", 6)), levels = c("HVA", "HVAK"))
+dds.hvak.hva$batch <-
+    factor(c("1","1","1","2","2","2","1","1","1","2","2","2"))
+
+design(dds.hvak.hva) <- ~ batch + sampletype 
+dds.hvak.hva <- DESeq(dds.hvak.hva)
+res.hvak.hva <- results(dds.hvak.hva, contrast = c("sampletype", "HVAK", "HVA"))
+res.hvak.hva <- lfcShrink(dds.hvak.hva, contrast = c("sampletype", "HVAK", "HVA"), res = res.hvak.hva, type = "normal")
+plotMA(res.hvak.hva,
+       main = "MA plot for HVAK over HVA\nin all peaks (significant over input)",
+       xlab = "Mean of normalized counts")
+summary(res.hvak.hva)
+
+# for genes outside of peaks
+colnames(peak.data$gene.counts.nopeaks)[1:12] <- c(paste0("HVA", 1:6), paste0("HVAK", 1:6))
+dds.hvak.hva.peakout <-
+    peak.data$gene.counts.nopeaks[ ,c(paste0("HVA", 1:6), paste0("HVAK", 1:6))]
+dds.hvak.hva.peakout$sampletype <-
+    factor(c(rep("HVA", 6), rep("HVAK", 6)), levels = c("HVA", "HVAK"))
+dds.hvak.hva.peakout$batch <-
+    factor(c("1","1","1","2","2","2","1","1","1","2","2","2"))
+
+design(dds.hvak.hva.peakout) <- ~ batch + sampletype 
+dds.hvak.hva.peakout <- DESeq(dds.hvak.hva.peakout)
+res.hvak.hva.peakout <- results(dds.hvak.hva.peakout, contrast = c("sampletype", "HVAK", "HVA"))
+res.hvak.hva.peakout <- lfcShrink(dds.hvak.hva.peakout, contrast = c("sampletype", "HVAK", "HVA"), res = res.hvak.hva.peakout, type = "normal")
+plotMA(res.hvak.hva.peakout,
+       main = "MA plot for HVAK over HVA outside of peaks",
+       xlab = "Mean of normalized counts")
+
+```
+```{r}
+dds_transform <- varianceStabilizingTransformation(dds.hvak.hva)
+rawCountTable_transform <- as.data.frame(assay(dds_transform))
+pseudoCount_transform = log2(rawCountTable_transform + 1)
+mat.dist = pseudoCount_transform
+mat.dist = as.matrix(dist(t(mat.dist)))
+mat.dist = mat.dist/max(mat.dist)
+setwd("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization")
+png('Hierchical_Clustering.png')
+cim(mat.dist, symkey = FALSE, margins = c(6, 6))
+suppressMessages(dev.off())
+```
+Final output is following:
+![Hierchical Clustering](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Hierchical_Clustering.png)
+```{r}
+plotPCA(dds_transform, intgroup = "sampletype", ntop = 500) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1) + xlim(-50,60) + ylim(-40,50)
+```
+
+I would like to just do PCA on samples from HEAP-CLIP_09282019.
+```{r}
+dds_09282019 <- dds_transform[, c(paste0("HVA",4:6), paste0("HVAK",4:6))]
+plotPCA(dds_09282019, intgroup = "sampletype", ntop = 500) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1)
+```
+
+```{r}
+peaks.all$hvak.hva.padj <- as.numeric(NA)
+peaks.all$hvak.hva.log2FC <- as.numeric(NA)
+peaks.all[rownames(res.hvak.hva), ]$hvak.hva.padj <-
+    res.hvak.hva$padj
+peaks.all[rownames(res.hvak.hva), ]$hvak.hva.log2FC <-
+    res.hvak.hva$log2FoldChange
+```
+
+Save the datasets
+```{r}
+saveRDS(peaks.all, "Datafiles/peaks-all-09282019.rds")
+filter.peaks <- subset(peaks.all, padj < padj.threshold)
+saveRDS(filter.peaks, "Datafiles/peaks-filtered-09282019.rds")
+```
+
+Map seed to peaks
+```{r}
+mirna.info.family <- readRDS("mirna-info-family-seedmatches.rds")  
+assignMirToPeaks <- function(miRNA = mirs, 
+                             peaks = es.peaks.utr3,
+                             database = mirna.info.family){
+  require(BSgenome)
+  require(CLIPanalyze)
+  require(Biostrings)
+  bsgenome <- load.bsgenome("mm10")
+  peaks.seq <- get.seqs(bsgenome, peaks)
+  peaks$seed.8mer <- as.character(NA)
+  peaks$seed.7m8 <- as.character(NA)
+  peaks$seed.7A1 <- as.character(NA)
+  peaks$seed.6mer <- as.character(NA)
+  
+  for (i in 1:length(miRNA)){
+    mir <- miRNA[i]
+    #Prepare seed matches
+    mir.6m <- as.character(database[database$miR.family %in% mir, ]$seedmatch.6)
+    mir.7m8 <- as.character(database[database$miR.family %in% mir, ]$seedmatch.m8)
+    mir.7mA <- as.character(database[database$miR.family %in% mir, ]$seedmatch.A1)
+    mir.8m <- as.character(database[database$miR.family %in% mir, ]$seedmatch.8)
+    #Filter peaks with 6mer matches
+    match <- GRanges(vmatchPattern(mir.6m, peaks.seq))
+    #Go back to peaks and map the seed match and extend 1 nt on both directions
+    match.extend <- peaks[seqnames(match),]
+    match.strand <- as.logical(strand(match.extend) == "+")
+    
+    start(match.extend[match.strand,]) <- start(match.extend[match.strand,]) + start(match[match.strand,]) - 2
+    match.extend[match.strand,] <- resize(match.extend[match.strand,], fix = "start", width = 8)
+    
+    end(match.extend[!match.strand,]) <- end(match.extend[!match.strand,]) - start(match[!match.strand,]) + 2
+    match.extend[!match.strand,] <- resize(match.extend[!match.strand,], fix = "start", width = 8)
+    #Assign seed types to these matches
+    match.extend.seq <- get.seqs(bsgenome, match.extend)
+    match.extend.seq.df <- data.frame(Peaks = names(match.extend.seq),
+                                      Sequence = as.character(match.extend.seq))
+    
+    for (j in 1:nrow(match.extend.seq.df)){
+      peak.name <- as.character(match.extend.seq.df[j, "Peaks"])
+      seq <- as.character(match.extend.seq.df[j, "Sequence"])
+      if (grepl(mir.8m, seq)){
+        peaks[peak.name, ]$seed.8mer <- ifelse(is.na(peaks[peak.name, ]$seed.8mer),
+                                               mir, 
+                                               paste(peaks[peak.name, ]$seed.8mer, mir, sep = ", "))
+      } else if (grepl(mir.7m8, seq)){
+        peaks[peak.name, ]$seed.7m8 <- ifelse(is.na(peaks[peak.name, ]$seed.7m8),
+                                              mir, 
+                                              paste(peaks[peak.name, ]$seed.7m8, mir, sep = ", "))
+      } else if (grepl(mir.7mA, seq)){
+        peaks[peak.name, ]$seed.7A1 <- ifelse(is.na(peaks[peak.name, ]$seed.7A1),
+                                              mir, 
+                                              paste(peaks[peak.name, ]$seed.7A1, mir, sep = ", "))
+      } else {
+        peaks[peak.name, ]$seed.6mer <- ifelse(is.na(peaks[peak.name, ]$seed.6mer),
+                                                mir, 
+                                                paste(peaks[peak.name, ]$seed.6mer, mir, sep = ", "))
+      }
+    }
+  }
+  
+  return(peaks)
+}
+```
+
+miRNAs with mean counts larger than 200 are selected and mapped to peaks
+```{r}
+mirna.family.DGE <- readRDS("Datafiles/mirna-counts-deseq-by-family-09282019.rds")
+mirs <- subset(mirna.family.DGE, baseMean > 200)
+mirs <- mirs$miR.family
+#peaks.mirs <- assignMirToPeaks(miRNA = mirs,
+#                               peaks = filter.peaks,
+#                               database = mirna.info.family)
+#saveRDS(peaks.mirs, "Datafiles/peaks-mirs-200-09282019.rds")
+peaks.mirs <- readRDS("Datafiles/peaks-mirs-200-09282019.rds")
+```
+
+```{r}
+targetofmiR <- function(peaks.mir = brain.peaks.mirs,
+                        miRNA = "",
+                        sitetype = "8mer"){
+  peaks.mir.sub <- as.data.frame(peaks.mir[,c("log2FC", "padj", 
+                                              "seed.8mer", "seed.7m8", "seed.7A1", "seed.6mer")])
+  peaks.seedmatch <- lapply(c("seed.8mer", "seed.7m8", "seed.7A1", "seed.6mer"),
+                            function(seed){
+                              map <- peaks.mir.sub[grepl(miRNA, peaks.mir.sub[,seed]),]
+                              map <- rownames(map)
+                              map
+                            })
+  names(peaks.seedmatch) <- c("seed.8mer", "seed.7m8", "seed.7A1", "seed.6mer")
+
+  if (sitetype == "8mer"){
+    maps <- peaks.seedmatch[[1]]
+  } else if (sitetype == "7mer_above"){
+    maps <- unique(unlist(peaks.seedmatch[1:3]))
+  } else if (sitetype == "7mer"){
+    maps <- unique(unlist(peaks.seedmatch[2:3]))
+  } else if (sitetype == "6mer"){
+    maps <- peaks.seedmatch[[4]]
+  } else {
+    print("Please input site type as: 8mer, 7mer_above, 7mer or 6mer")
+  }
+    return(peaks.mir[maps])
+                        }
+```
+
+```{r}
+mirs.peaks <- lapply(mirs,
+                     function(mir){
+                       targetofmiR(miRNA = mir,
+                                   peaks.mir = peaks.mirs,
+                                   sitetype = "7mer_above")
+                     })
+names(mirs.peaks) <- mirs
+saveRDS(mirs.peaks, "Datafiles/miRNA-peaks-list-09282019.rds")
+```
+
+```{r}
+lens <- as.data.frame(sapply(mirs.peaks, function(x) length(x)))
+mirs.peaks.log2FC.median <- sapply(mirs.peaks,
+                            function(list){
+                              log2FCs <- list$hvak.hva.log2FC
+                              return(median(log2FCs))
+                            })
+mirs.peaks.log2FC.mean <- sapply(mirs.peaks,
+                            function(list){
+                              log2FCs <- list$hvak.hva.log2FC
+                              return(mean(log2FCs))
+                            })
+
+mirs.targets.log2FC <- cbind(as.data.frame(mirs.peaks.log2FC.median),
+                             as.data.frame(mirs.peaks.log2FC.mean),
+                             lens)
+colnames(mirs.targets.log2FC) <- c("targets_log2FC_median","targets_log2FC_mean", "N")
+
+mirs.targets.log2FC <- merge(mirs.targets.log2FC, mirna.family.DGE[,c("log2FoldChange", "padj")], by = 0)
+colnames(mirs.targets.log2FC)[1] <- "miR.family"
+```
+
+
+Show any miRNA that has more than 20 peaks matched
+```{r}
+df <- subset(mirs.targets.log2FC, N > 20)
+p <- ggplot(df, aes(x = log2FoldChange, y = targets_log2FC_median, label = miR.family, size = N)) +
+  geom_point(colour = "#1C75BB", alpha = 0.6) +
+  #scale_color_manual(fill = "yellow") +
+  geom_hline(yintercept = 0, linetype = "dashed", size = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+  xlab("miRNA expression Fold change log2 (HVAK / HVA)") +
+  ylab("Median of peak signal changes log2 (HVAK / HVA)") +
+  theme_bw() +
+      theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"))
+p <- ggplotly(p)
+p
+```
+
+```{r}
+p2 <- ggplot(df, aes(x = log2FoldChange, y = targets_log2FC_mean, label = miR.family, size = N)) +
+  geom_point(colour = "#EC469A", alpha = 0.6) +
+  #scale_color_manual(fill = "yellow") +
+  geom_hline(yintercept = 0, linetype = "dashed", size = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+  xlab("miRNA expression Fold change log2 (HVAK / HVA)") +
+  ylab("Mean of peak signal changes log2 (HVAK / HVA)") +
+  theme_bw() +
+      theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"))
+p2 <- ggplotly(p2)
+p2
+```
+
+If we only look at the top 40 highly expressed miRNAs
+
+```{r}
+mirna.family.DGE <- mirna.family.DGE[order(-mirna.family.DGE$baseMean),]
+mirs.40 <- rownames(mirna.family.DGE)[1:40]
+
+df.40 <- df[df$miR.family %in% mirs.40,]
+```
+
+```{r}
+p3 <- ggplot(df.40, aes(x = log2FoldChange, y = targets_log2FC_median, label = miR.family, size = N)) +
+  geom_point(colour = "#1C75BB", alpha = 0.6) +
+  #scale_color_manual(fill = "yellow") +
+  geom_hline(yintercept = 0, linetype = "dashed", size = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+  xlab("Top 40 miRNA expression Fold change log2 (HVAK / HVA)") +
+  ylab("Median of peak signal changes log2 (HVAK / HVA)") +
+  theme_bw() +
+      theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"))
+p3 <- ggplotly(p3)
+p3
+
+p4 <- ggplot(df.40, aes(x = log2FoldChange, y = targets_log2FC_mean, label = miR.family, size = N)) +
+  geom_point(colour = "#EC469A", alpha = 0.6) +
+  #scale_color_manual(fill = "yellow") +
+  geom_hline(yintercept = 0, linetype = "dashed", size = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+  xlab("Top 40 miRNA expression Fold change log2 (HVAK / HVA)") +
+  ylab("Mean of peak signal changes log2 (HVAK / HVA)") +
+  theme_bw() +
+      theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold"))
+p4 <- ggplotly(p4)
+p4
+```
+
+
+
+Here are the top 10 miRNAs with the most peaks associated.
+
+```{r}
+color.vec <- brewer.pal(name = "Spectral", n = 11)
+df <- as.data.frame(filter.peaks)
+df$hvak.hva.logP <- -log10(df$hvak.hva.padj)
+len <- sapply(mirs.peaks, function(x) length(x))
+mirs.peaks <- mirs.peaks[order(-len)]
+mirna <- names(mirs.peaks)
+mirs.peaks.names <- lapply(mirs.peaks, function(x) names(x))
+
+for (i in 1:10){
+  p <- ggplot() + 
+    geom_point(data = df, aes(x = hvak.hva.log2FC, y = hvak.hva.logP), size = 1, alpha = 0.5, color = "grey80") +
+    geom_point(data = df[mirs.peaks.names[[mirna[i]]],], aes(x = hvak.hva.log2FC, y = hvak.hva.logP), size = 1, alpha = 0.7, color = "#7570B3") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", size = 0.3) +
+    geom_vline(xintercept = c(-0.5, 0.5), linetype = "dashed", size = 0.3) +
+    xlab("Fold change log2 (HVAK / HVA)") +
+    ylab("-log10(FDR)") +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
+    #guides(fill = guide_legend(title = "miRNA family")) +
+    ggtitle(sprintf("%s targets", mirna[i ]))
+  print(p)
+  
+}
+```
+
+I just want a table of all top 4o miRNAs and the number of peaks that are associated with them with LFC (HVAK/HVA) > 0 and < 0.
+```{r}
+peak.number <- as.data.frame(table(mirs.peaks[[1]]$hvak.hva.log2FC > 0))
+peak.number <- t(peak.number[,-1])
+colnames(peak.number) <- c("LFC(HVAK/HVA) < 0", "LFC(HVAK/HVA) > 0")
+for (i in 2: 40) {
+  new.peak <- as.data.frame(table(mirs.peaks[[i]]$hvak.hva.log2FC > 0))
+  new.peak <- t(new.peak[,-1])
+  peak.number <- rbind(peak.number, new.peak)
+}
+
+rownames(peak.number) <- names(mirs.peaks)[1:40]
+peak.number <- rbind(peak.number, c(sum(df$hvak.hva.log2FC < 0), sum(df$hvak.hva.log2FC > 0)))
+rownames(peak.number)[dim(peak.number)[1]] <- "Total"
+peak.number
+```
+
+
+
+

@@ -1,0 +1,294 @@
+---
+title: "KEGG and GSEA analysis"
+author: "Bing Shui"
+date: "12/10/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up libraries
+```{r}
+suppressMessages(
+suppressWarnings(
+  c(library(org.Mm.eg.db),
+    library(AnnotationDbi),
+    library(data.table),
+    library(tidyverse),
+    library(rtracklayer),
+    library(RColorBrewer),
+    library(gplots),
+    library(clusterProfiler),
+    library(fgsea))
+  )
+)
+```
+
+## KEGG analysis
+```{r}
+# lead the miRNA list with peaks associated
+mirs.peaks <- readRDS("Datafiles/miRNA-peaks-list-09282019-withIDs.rds")
+len <- sapply(mirs.peaks, function(x) length(x))
+mirs.peaks <- mirs.peaks[order(-len)]
+mirna <- names(mirs.peaks)
+```
+
+Run KEGG analysis with the whole universe as background.
+```{r}
+KEGG.list <- list()
+mirname <- c()
+for (i in 1:20) {
+  sig.genes <- mirs.peaks[[i]]$target_Entrez_ID
+  kk <- enrichKEGG(gene = sig.genes, organism = 'mmu')
+  enriched.number <- dim(kk)[1]
+  print(paste("Number of KEGG pathway enriched for", mirna[i],  ":", enriched.number))
+  if (enriched.number > 0) {
+    KEGG.list <- c(KEGG.list, list(as.data.frame(kk)))
+    d <- dotplot(kk, showCategory = 20) + labs(title = paste("Enriched KEGG pathways for", mirna[i], "targets"))
+    print(d)
+    mirname <- c(mirname,mirna[i])
+    write.csv(as.data.frame(kk), paste("KEGG Analysis/", str_remove_all(mirna[i], "/"), "_KEGG.csv", sep = ""))
+  }
+}
+
+names(KEGG.list) <- mirname
+saveRDS(KEGG.list, "Datafiles/peak.KEGG.result.rds")
+```
+
+
+## GSEA analysis
+I would like to do GSEA analysis on KEGG pathways for each miRNA's associated peaks.
+
+### Hallmark geneset
+```{r}
+# load the proteomics datafile
+protein_DGE <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/Proteomics data/colon tumor-enema model/crcMS_diff.csv")
+
+# annotate the proteomics dataset with Entrez ID
+# Entrez IDs are annotated using `org.Mm.eg.db` package since this is the most updated
+annotations_entrez <- AnnotationDbi::select(org.Mm.eg.db,
+                                           keys = as.character(protein_DGE$`Protein Id`),
+                                           columns = c("ENTREZID"),
+                                           keytype = "UNIPROT")
+
+# Determine the indices for the non-duplicated genes
+non_duplicates_idx <- which(duplicated(annotations_entrez$ENTREZID) == FALSE)
+
+# Return only the non-duplicated genes using indices
+annotations_entrez <- annotations_entrez[non_duplicates_idx, ]
+
+# Check number of NAs returned
+is.na(annotations_entrez$ENTREZID) %>%
+  which() %>%
+  length()
+
+# annotate the dataset with Entrez ID
+protein_DGE$Entrez_ID <- NA
+for (i in 1:dim(protein_DGE)[1]) {
+  index <- grep(protein_DGE$`Protein Id`[i], annotations_entrez$UNIPROT)
+  if (length(index)>0) {
+    protein_DGE$Entrez_ID[i] <- paste(annotations_entrez$ENTREZID[index], collapse = " ")
+  }
+}
+```
+
+```{r}
+# load the geneset data
+load("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GSEA Analysis/mouse_H_v5p2.rdata")
+pathways <- Mm.H
+
+# GSEA on Hallmark gene set for the top 20 miRNAs
+GSEA.list <- list()
+mirname <- c()
+plist <- c()
+for (i in 1:20) {
+  gseadata <- mirs.peaks[[i]]$target_Entrez_ID
+  gseadata <- gseadata[!is.na(gseadata)]
+  ranks <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$LFC
+  names(ranks) <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$Entrez_ID
+  ranks <- sort(ranks, decreasing = T)
+  fgseaRes <- fgsea(pathways, ranks, minSize=15, maxSize = 500, nperm=1000)
+  fgseaRes <- fgseaRes[fgseaRes$padj < 0.1,]
+  suppressMessages(fgseaRes[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Mm.eg.db, keytype="ENTREZID", column="SYMBOL")])
+  fgseaRes$leadingEdge <- as.character(fgseaRes$leadingEdge)
+  if (dim(fgseaRes)[1] > 0) {
+    GSEA.list <- c(GSEA.list, list(as.data.frame(fgseaRes)))
+    mirname <- c(mirname,mirna[i])
+    write.csv(as.data.frame(fgseaRes), paste("GSEA Analysis/", str_remove_all(mirna[i], "/"), "_Hallmark.csv", sep = ""))
+    for (n in 1:length(fgseaRes$pathway)) {
+      p <- plotEnrichment(pathways[[fgseaRes$pathway[n]]], ranks) + labs(title = paste(mirna[i],"-",fgseaRes$pathway[n], sep = ""))
+      print(p)
+    }
+    plotGseaTable(pathways[fgseaRes$pathway], ranks, fgseaRes, gseaParam = 0.5) 
+  }
+}
+names(GSEA.list) <- mirname
+saveRDS(GSEA.list, "Datafiles/peak.GSEA.Hallmark.result.rds")
+
+```
+### C2-curated gene sets
+```{r}
+# load the geneset data
+load("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GSEA Analysis/mouse_c2_v5p2.rdata")
+pathways <- Mm.c2
+
+# GSEA on C2 gene set for the top 20 miRNAs
+GSEA.list <- list()
+mirname <- c()
+plist <- c()
+for (i in 1:20) {
+  gseadata <- mirs.peaks[[i]]$target_Entrez_ID
+  gseadata <- gseadata[!is.na(gseadata)]
+  ranks <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$LFC
+  names(ranks) <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$Entrez_ID
+  ranks <- sort(ranks, decreasing = T)
+  fgseaRes <- fgsea(pathways, ranks, minSize=15, maxSize = 500, nperm=1000)
+  fgseaRes <- fgseaRes[fgseaRes$padj < 0.1,]
+  suppressMessages(fgseaRes[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Mm.eg.db, keytype="ENTREZID", column="SYMBOL")])
+  fgseaRes$leadingEdge <- as.character(fgseaRes$leadingEdge)
+  if (dim(fgseaRes)[1] > 0) {
+    GSEA.list <- c(GSEA.list, list(as.data.frame(fgseaRes)))
+    mirname <- c(mirname,mirna[i])
+    write.csv(as.data.frame(fgseaRes), paste("GSEA Analysis/", str_remove_all(mirna[i], "/"), "_C2.csv", sep = ""))
+    topPathwaysUp <- fgseaRes[ES > 0][head(order(padj), n=10), pathway]
+    topPathwaysDown <- fgseaRes[ES < 0][head(order(padj), n=10), pathway]
+    topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+    print(mirna[i])
+    plotGseaTable(pathways[topPathways], ranks, fgseaRes, gseaParam = 0.5) 
+  }
+}
+names(GSEA.list) <- mirname
+saveRDS(GSEA.list, "Datafiles/peak.GSEA.C2.result.rds")
+
+```
+### C3-motif gene sets
+```{r}
+# load the geneset data
+load("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GSEA Analysis/mouse_c3_v5p2.rdata")
+pathways <- Mm.c3
+
+# GSEA on C2 gene set for the top 20 miRNAs
+GSEA.list <- list()
+mirname <- c()
+plist <- c()
+for (i in 1:20) {
+  gseadata <- mirs.peaks[[i]]$target_Entrez_ID
+  gseadata <- gseadata[!is.na(gseadata)]
+  ranks <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$LFC
+  names(ranks) <- protein_DGE[protein_DGE$Entrez_ID %in% gseadata, ]$Entrez_ID
+  ranks <- sort(ranks, decreasing = T)
+  fgseaRes <- fgsea(pathways, ranks, minSize=15, maxSize = 500, nperm=1000)
+  fgseaRes <- fgseaRes[fgseaRes$padj < 0.1,]
+  suppressMessages(fgseaRes[, leadingEdge := lapply(leadingEdge, mapIds, x=org.Mm.eg.db, keytype="ENTREZID", column="SYMBOL")])
+  fgseaRes$leadingEdge <- as.character(fgseaRes$leadingEdge)
+  if (dim(fgseaRes)[1] > 0) {
+    GSEA.list <- c(GSEA.list, list(as.data.frame(fgseaRes)))
+    mirname <- c(mirname,mirna[i])
+    write.csv(as.data.frame(fgseaRes), paste("GSEA Analysis/", str_remove_all(mirna[i], "/"), "_C3.csv", sep = ""))
+    topPathwaysUp <- fgseaRes[ES > 0][head(order(padj), n=10), pathway]
+    topPathwaysDown <- fgseaRes[ES < 0][head(order(padj), n=10), pathway]
+    topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+    print(mirna[i])
+    plotGseaTable(pathways[topPathways], ranks, fgseaRes, gseaParam = 0.5) 
+  }
+}
+names(GSEA.list) <- mirname
+saveRDS(GSEA.list, "Datafiles/peak.GSEA.C3.result.rds")
+
+```
+
+### Plot a heatmap for GSEA analysis done on all 3 genesets
+```{r}
+# compile a matrix containing all genesets that had enrichment for all 20 miRNAs and their enrichment score
+hall.GSEA <- readRDS("Datafiles/peak.GSEA.Hallmark.result.rds")
+c2.GSEA <- readRDS("Datafiles/peak.GSEA.C2.result.rds")
+c3.GSEA <- readRDS("Datafiles/peak.GSEA.C3.result.rds")
+
+gsea.matrix <- data.frame(c(1:20))
+gsea.matrix <- t(gsea.matrix)
+colnames(gsea.matrix) <- mirna[1:20]
+gsea.matrix[1,] <- NA
+for (i in 1:length(hall.GSEA)) {
+  for (n in 1:length(hall.GSEA[[i]]$pathway)) {
+    if (length(grep(hall.GSEA[[i]]$pathway[n], rownames(gsea.matrix))) > 0) {
+    col.index <- grep(names(hall.GSEA[i]), colnames(gsea.matrix))
+    row.index <- grep(hall.GSEA[[i]]$pathway[n], rownames(gsea.matrix))
+    gsea.matrix[row.index, col.index] <- hall.GSEA[[i]]$ES[n]
+    }
+  else {
+    gsea.matrix <- rbind(gsea.matrix, rep(NA,20))
+    rownames(gsea.matrix)[dim(gsea.matrix)[1]] <- hall.GSEA[[i]]$pathway[n]
+    col.index <- grep(names(hall.GSEA[i]), colnames(gsea.matrix))
+    gsea.matrix[dim(gsea.matrix)[1], col.index] <- hall.GSEA[[i]]$ES[n]
+    }
+  }
+}
+
+gsea.matrix <- gsea.matrix[-1,]
+
+for (i in 1:length(c2.GSEA)) {
+  for (n in 1:length(c2.GSEA[[i]]$pathway)) {
+    if (length(grep(c2.GSEA[[i]]$pathway[n], rownames(gsea.matrix))) > 0) {
+    col.index <- grep(names(c2.GSEA[i]), colnames(gsea.matrix))
+    row.index <- grep(c2.GSEA[[i]]$pathway[n], rownames(gsea.matrix))
+    gsea.matrix[row.index, col.index] <- c2.GSEA[[i]]$ES[n]
+    }
+  else {
+    gsea.matrix <- rbind(gsea.matrix, rep(NA,20))
+    rownames(gsea.matrix)[dim(gsea.matrix)[1]] <- c2.GSEA[[i]]$pathway[n]
+    col.index <- grep(names(c2.GSEA[i]), colnames(gsea.matrix))
+    gsea.matrix[dim(gsea.matrix)[1], col.index] <- c2.GSEA[[i]]$ES[n]
+    }
+  }
+}
+
+for (i in 1:length(c3.GSEA)) {
+  for (n in 1:length(c3.GSEA[[i]]$pathway)) {
+    if (length(grep(c3.GSEA[[i]]$pathway[n], rownames(gsea.matrix))) > 0) {
+    col.index <- grep(names(c3.GSEA[i]), colnames(gsea.matrix))
+    row.index <- grep(c3.GSEA[[i]]$pathway[n], rownames(gsea.matrix))
+    gsea.matrix[row.index, col.index] <- c3.GSEA[[i]]$ES[n]
+    }
+  else {
+    gsea.matrix <- rbind(gsea.matrix, rep(NA,20))
+    rownames(gsea.matrix)[dim(gsea.matrix)[1]] <- c3.GSEA[[i]]$pathway[n]
+    col.index <- grep(names(c3.GSEA[i]), colnames(gsea.matrix))
+    gsea.matrix[dim(gsea.matrix)[1], col.index] <- c3.GSEA[[i]]$ES[n]
+    }
+  }
+}
+
+gsea.matrix <- as.matrix(gsea.matrix)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(256)
+na_color <- colorRampPalette("grey")
+
+png('GSEA Analysis/GSEA_HEAP-CLIP_peaks.png',
+    width = 1000,
+    height = 1000,
+    res = 100,
+    pointsize = 8)
+par(cex.main=1.8)
+heatmap.2(gsea.matrix,
+          main = "GSEA for 20 most active miRNAs from HEAP-CLIP",
+          density.info = "none",
+          key = TRUE,
+          lwid = c(1,7),
+          lhei = c(1,7),
+          col=my_palette,
+          labRow = FALSE,
+          margins = c(20,7),
+          symbreaks = TRUE,
+          trace = "none",
+          Rowv=FALSE, 
+          Colv=FALSE,
+          dendrogram = "none",
+          na.color = "grey",
+          cexCol = 1,
+          na.rm = FALSE)
+dev.off()
+```
+![GSEA](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/GSEA Analysis/GSEA_HEAP-CLIP_peaks.png)
+

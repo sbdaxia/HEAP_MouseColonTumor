@@ -1,0 +1,1 @@
+#Name (cmd = mergePeaks Kmer/homer-denovo-output-merged.hva.up-peaks-k7/bg.clean.pos Kmer/homer-denovo-output-merged.hva.up-peaks-k7/target.clean..pos -d given -cobound 1 -prefix Kmer/homer-denovo-output-merged.hva.up-peaks-k7/0.0538521605349196.2.tmp)	chr	start	end	strand	stat	stat2	Kmer/homer-denovo-output-merged.hva.up-peaks-k7/target.clean..pos

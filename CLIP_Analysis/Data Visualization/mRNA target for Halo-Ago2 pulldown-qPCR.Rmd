@@ -1,0 +1,123 @@
+---
+title: "mRNA target for Halo-Ago2 pulldown-qPCR"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    fig_height: 7
+    fig_width: 10
+    toc: yes
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Library Preparation
+
+```{r}
+suppressMessages(
+  suppressWarnings(
+    c(library(DESeq2),
+      library(readr),
+      library(tidyverse)
+      )))
+```
+
+## Getting peak/target ID list and CLIP_LFC
+```{r}
+mirs.peaks <- readRDS("Datafiles/miRNA-peaks-list-09282019-withIDs.rds")
+peaks.mir <- readRDS("Datafiles/peaks-mirs-200-09282019-withID.rds")
+clip_DGE <- as.data.frame(cbind(peaks.mir$name, peaks.mir$target_gene, peaks.mir$target_Ensembl_ID, peaks.mir$target_Uniprot_ID, peaks.mir$target_Entrez_ID, peaks.mir$hvak.hva.log2FC, peaks.mir$hvak.hva.padj))
+colnames(clip_DGE) <- c("peak", "target_gene", "target_Ensembl_ID", "target_Uniprot_ID", "target_Entrez_ID", "CLIP_LFC", "CLIP_p")
+clip_DGE$CLIP_LFC <- as.numeric(as.character(clip_DGE$CLIP_LFC))
+clip_DGE$CLIP_p  <- as.numeric(as.character(clip_DGE$CLIP_p))
+```
+
+## Get RNA LFC
+```{r}
+rna_DGE <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/RNA-Seq/Mouse colon tumor/4-OHT enema model/Analysis/Differential Analysis_filtered.csv")
+lfc_list <- inner_join(clip_DGE, rna_DGE[,c(1,3,6)], by = c("target_Ensembl_ID" = "X1"))
+colnames(lfc_list)[8:9] <- c("RNA_LFC","RNA_p")
+```
+
+## Get protein LFC
+```{r}
+protein_DGE <- read_csv("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/Proteomics data/colon tumor-enema model/crcMS_diff.csv")
+lfc_list <- inner_join(lfc_list, protein_DGE[,c(2,7,4)], by = c("target_Uniprot_ID" = "Protein Id"))
+colnames(lfc_list)[10:11] <- c("Protein_LFC", "Protein_p")
+```
+
+## export the LFC list
+```{r}
+write_csv(lfc_list, "Peak-taget CLIP-RNA-Protein LFC.csv")
+```
+
+## Select mRNA targets for Halo-Ago2 pulldown qPCR
+There are 3 categories that I am selecting:
+
+In KRas-G12D samples
+
+1. This is the group with tigher miRNA-mRNA binding, RNA and protein upregulation
+      
+      p = Max(|CLIP_LFC > 0| + |RNA_LFC > 0| + |Protein_LFC > 0|)
+
+2. This is the group with little change in miRNA-mRNA binding, RNA and protein level
+      
+      p = Min(|CLIP_LFC ~ 0| + |RNA_LFC ~ 0| + |Protein_LFC ~ 0|)
+      
+3. This is the group with little change in miRNA-mRNA binding, but still increased RNA and protein level. So potential false negatives from CLIP
+      
+      p = Max(|CLIP_LFC ~ 0| + |RNA_LFC > 0| + |Protein_LFC > 0|)
+      
+4. This is the group that conforms to cononical miRNA-targeting mechanism, with tighter miRNA-mRNA binding, RNA and protein down-regulation
+      
+      p = Max(|CLIP_LFC > 0| + |RNA_LFC < 0| + |Protein_LFC < 0|)
+      
+### Category One - 4 targets
+p = Max(|CLIP_LFC > 0| + |RNA_LFC > 0| + |Protein_LFC > 0|)
+```{r}
+p_threshold <- 0.05
+cat_1 <- lfc_list %>% dplyr::filter(CLIP_LFC > 0, CLIP_p < p_threshold, RNA_LFC > 0, RNA_p < p_threshold, Protein_LFC > 0, Protein_p < p_threshold)
+cat_1$rank_value <- abs(cat_1$CLIP_LFC) + abs(cat_1$RNA_LFC) + abs(cat_1$Protein_LFC)
+cat_1 <- cat_1[order(cat_1$rank_value, decreasing = TRUE),]
+head(cat_1, 10)
+write_csv(cat_1, "Taqman mRNA targets-category 1.csv")
+```
+
+### Category Two - 2 targets
+p = Min(|CLIP_LFC ~ 0| + |RNA_LFC ~ 0| + |Protein_LFC ~ 0|)
+```{r}
+cat_2 <- lfc_list %>% dplyr::filter(CLIP_p > p_threshold, RNA_p > p_threshold, Protein_p > p_threshold)
+cat_2$rank_value <- abs(cat_2$CLIP_LFC) + abs(cat_2$RNA_LFC) + abs(cat_2$Protein_LFC)
+cat_2 <- cat_2[order(cat_2$rank_value, decreasing = F),]
+head(cat_2, 10)
+write_csv(cat_2, "Taqman mRNA targets-category 2.csv")
+```
+
+### Category Three - 2 targets
+p = Max(|CLIP_LFC ~ 0| + |RNA_LFC > 0| + |Protein_LFC > 0|)
+```{r}
+cat_3 <- lfc_list %>% dplyr::filter(CLIP_p > p_threshold, RNA_LFC > 0, RNA_p < p_threshold, Protein_LFC > 0, Protein_p < p_threshold)
+```
+
+Need to exclude targets already in category 1
+```{r}
+cat3_dif <- setdiff(cat_3$target_gene, cat_1$target_gene)
+cat_3 <- cat_3[cat_3$target_gene %in% cat3_dif,]
+cat_3$rank_value <- abs(cat_3$CLIP_LFC) + abs(cat_3$RNA_LFC) + abs(cat_3$Protein_LFC)
+cat_3 <- cat_3[order(cat_3$rank_value, decreasing = TRUE),]
+head(cat_3, 10)
+write_csv(cat_3, "Taqman mRNA targets-category 3.csv")
+```
+
+### Category Four - 2 targets
+p = Max(|CLIP_LFC > 0| + |RNA_LFC < 0| + |Protein_LFC < 0|)
+```{r}
+cat_4 <- lfc_list %>% dplyr::filter(CLIP_LFC > 0, CLIP_p < p_threshold, RNA_LFC < 0, RNA_p < p_threshold, Protein_LFC < 0, Protein_p < p_threshold)
+cat_4$rank_value <- abs(cat_4$CLIP_LFC) + abs(cat_4$RNA_LFC) + abs(cat_4$Protein_LFC)
+cat_4 <- cat_4[order(cat_4$rank_value, decreasing = TRUE),]
+head(cat_4, 10)
+write_csv(cat_4, "Taqman mRNA targets-category 4.csv")
+```

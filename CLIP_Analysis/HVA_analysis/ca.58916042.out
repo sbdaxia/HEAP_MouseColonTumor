@@ -1,0 +1,341 @@
+
+        ==========     _____ _    _ ____  _____  ______          _____  
+        =====         / ____| |  | |  _ \|  __ \|  ____|   /\   |  __ \ 
+          =====      | (___ | |  | | |_) | |__) | |__     /  \  | |  | |
+            ====      \___ \| |  | |  _ <|  _  /|  __|   / /\ \ | |  | |
+              ====    ____) | |__| | |_) | | \ \| |____ / ____ \| |__| |
+        ==========   |_____/ \____/|____/|_|  \_\______/_/    \_\_____/
+       Rsubread 1.28.1
+
+//========================== featureCounts setting ===========================\\
+||                                                                            ||
+||             Input files : 12 BAM files                                     ||
+||                           S Exp-HVA1_LIB041590_GEN00154971_R1_barcode. ... ||
+||                           S Exp-HVA2_LIB041590_GEN00154974_R1_barcode. ... ||
+||                           S Exp-HVA3_LIB041590_GEN00154977_R1_barcode. ... ||
+||                           S Exp-HVA4_LIB043893_GEN00166439_R1_barcode. ... ||
+||                           S Exp-HVA5_LIB043893_GEN00166442_R1_barcode. ... ||
+||                           S Exp-HVA6_LIB043893_GEN00166445_R1_barcode. ... ||
+||                           S IC-HVA1_LIB041590_GEN00154972_R1_barcode.u ... ||
+||                           S IC-HVA2_LIB041590_GEN00154975_R1_barcode.u ... ||
+||                           S IC-HVA3_LIB041590_GEN00154978_R1_barcode.u ... ||
+||                           S IC-HVA4_LIB043893_GEN00166440_R1_barcode.u ... ||
+||                           S IC-HVA5_LIB043893_GEN00166443_R1_barcode.u ... ||
+||                           S IC-HVA6_LIB043893_GEN00166446_R1_barcode.u ... ||
+||                                                                            ||
+||      Dir for temp files : .                                                ||
+||                 Threads : 1                                                ||
+||                   Level : meta-feature level                               ||
+||              Paired-end : no                                               ||
+||         Strand specific : stranded                                         ||
+||      Multimapping reads : not counted                                      ||
+|| Multi-overlapping reads : counted                                          ||
+||   Min overlapping bases : 1                                                ||
+||                                                                            ||
+\\===================== http://subread.sourceforge.net/ ======================//
+
+//================================= Running ==================================\\
+||                                                                            ||
+|| Load annotation file ./.Rsubread_UserProvidedAnnotation_pid1249 ...        ||
+||    Features : 69956                                                        ||
+||    Meta-features : 69956                                                   ||
+||    Chromosomes/contigs : 22                                                ||
+||                                                                            ||
+|| Process BAM file Exp-HVA1_LIB041590_GEN00154971_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 3947855                                                   ||
+||    Successfully assigned reads : 1881193 (47.7%)                           ||
+||    Running time : 0.08 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA2_LIB041590_GEN00154974_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1976289                                                   ||
+||    Successfully assigned reads : 1028468 (52.0%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA3_LIB041590_GEN00154977_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 2120512                                                   ||
+||    Successfully assigned reads : 1026813 (48.4%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA4_LIB043893_GEN00166439_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 4998986                                                   ||
+||    Successfully assigned reads : 2881371 (57.6%)                           ||
+||    Running time : 0.10 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA5_LIB043893_GEN00166442_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1189637                                                   ||
+||    Successfully assigned reads : 932746 (78.4%)                            ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA6_LIB043893_GEN00166445_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 935324                                                    ||
+||    Successfully assigned reads : 465004 (49.7%)                            ||
+||    Running time : 0.02 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA1_LIB041590_GEN00154972_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1764439                                                   ||
+||    Successfully assigned reads : 1169380 (66.3%)                           ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA2_LIB041590_GEN00154975_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1198843                                                   ||
+||    Successfully assigned reads : 826435 (68.9%)                            ||
+||    Running time : 0.02 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA3_LIB041590_GEN00154978_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1717700                                                   ||
+||    Successfully assigned reads : 1173803 (68.3%)                           ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA4_LIB043893_GEN00166440_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 3465852                                                   ||
+||    Successfully assigned reads : 2122533 (61.2%)                           ||
+||    Running time : 0.06 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA5_LIB043893_GEN00166443_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1693889                                                   ||
+||    Successfully assigned reads : 1165791 (68.8%)                           ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA6_LIB043893_GEN00166446_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 2229465                                                   ||
+||    Successfully assigned reads : 1467706 (65.8%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+||                         Read assignment finished.                          ||
+||                                                                            ||
+\\===================== http://subread.sourceforge.net/ ======================//
+
+
+        ==========     _____ _    _ ____  _____  ______          _____  
+        =====         / ____| |  | |  _ \|  __ \|  ____|   /\   |  __ \ 
+          =====      | (___ | |  | | |_) | |__) | |__     /  \  | |  | |
+            ====      \___ \| |  | |  _ <|  _  /|  __|   / /\ \ | |  | |
+              ====    ____) | |__| | |_) | | \ \| |____ / ____ \| |__| |
+        ==========   |_____/ \____/|____/|_|  \_\______/_/    \_\_____/
+       Rsubread 1.28.1
+
+//========================== featureCounts setting ===========================\\
+||                                                                            ||
+||             Input files : 12 BAM files                                     ||
+||                           S Exp-HVA1_LIB041590_GEN00154971_R1_barcode. ... ||
+||                           S Exp-HVA2_LIB041590_GEN00154974_R1_barcode. ... ||
+||                           S Exp-HVA3_LIB041590_GEN00154977_R1_barcode. ... ||
+||                           S Exp-HVA4_LIB043893_GEN00166439_R1_barcode. ... ||
+||                           S Exp-HVA5_LIB043893_GEN00166442_R1_barcode. ... ||
+||                           S Exp-HVA6_LIB043893_GEN00166445_R1_barcode. ... ||
+||                           S IC-HVA1_LIB041590_GEN00154972_R1_barcode.u ... ||
+||                           S IC-HVA2_LIB041590_GEN00154975_R1_barcode.u ... ||
+||                           S IC-HVA3_LIB041590_GEN00154978_R1_barcode.u ... ||
+||                           S IC-HVA4_LIB043893_GEN00166440_R1_barcode.u ... ||
+||                           S IC-HVA5_LIB043893_GEN00166443_R1_barcode.u ... ||
+||                           S IC-HVA6_LIB043893_GEN00166446_R1_barcode.u ... ||
+||                                                                            ||
+||      Dir for temp files : .                                                ||
+||                 Threads : 1                                                ||
+||                   Level : meta-feature level                               ||
+||              Paired-end : no                                               ||
+||         Strand specific : stranded                                         ||
+||      Multimapping reads : not counted                                      ||
+|| Multi-overlapping reads : not counted                                      ||
+||   Min overlapping bases : 1                                                ||
+||                                                                            ||
+\\===================== http://subread.sourceforge.net/ ======================//
+
+//================================= Running ==================================\\
+||                                                                            ||
+|| Load annotation file ./.Rsubread_UserProvidedAnnotation_pid1249 ...        ||
+||    Features : 65029                                                        ||
+||    Meta-features : 65029                                                   ||
+||    Chromosomes/contigs : 22                                                ||
+||                                                                            ||
+|| Process BAM file Exp-HVA1_LIB041590_GEN00154971_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 3947855                                                   ||
+||    Successfully assigned reads : 2341377 (59.3%)                           ||
+||    Running time : 0.08 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA2_LIB041590_GEN00154974_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1976289                                                   ||
+||    Successfully assigned reads : 1143896 (57.9%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA3_LIB041590_GEN00154977_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 2120512                                                   ||
+||    Successfully assigned reads : 1132145 (53.4%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA4_LIB043893_GEN00166439_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 4998986                                                   ||
+||    Successfully assigned reads : 2755489 (55.1%)                           ||
+||    Running time : 0.09 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA5_LIB043893_GEN00166442_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1189637                                                   ||
+||    Successfully assigned reads : 605502 (50.9%)                            ||
+||    Running time : 0.02 minutes                                             ||
+||                                                                            ||
+|| Process BAM file Exp-HVA6_LIB043893_GEN00166445_R1_barcode.uniq.bam...     ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 935324                                                    ||
+||    Successfully assigned reads : 397858 (42.5%)                            ||
+||    Running time : 0.02 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA1_LIB041590_GEN00154972_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1764439                                                   ||
+||    Successfully assigned reads : 913732 (51.8%)                            ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA2_LIB041590_GEN00154975_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1198843                                                   ||
+||    Successfully assigned reads : 619376 (51.7%)                            ||
+||    Running time : 0.02 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA3_LIB041590_GEN00154978_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1717700                                                   ||
+||    Successfully assigned reads : 870571 (50.7%)                            ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA4_LIB043893_GEN00166440_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 3465852                                                   ||
+||    Successfully assigned reads : 1874080 (54.1%)                           ||
+||    Running time : 0.06 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA5_LIB043893_GEN00166443_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 1693889                                                   ||
+||    Successfully assigned reads : 873502 (51.6%)                            ||
+||    Running time : 0.03 minutes                                             ||
+||                                                                            ||
+|| Process BAM file IC-HVA6_LIB043893_GEN00166446_R1_barcode.uniq.bam...      ||
+||    Single-end reads are included.                                          ||
+||    Assign reads to features...                                             ||
+||    Total reads : 2229465                                                   ||
+||    Successfully assigned reads : 1107857 (49.7%)                           ||
+||    Running time : 0.04 minutes                                             ||
+||                                                                            ||
+||                         Read assignment finished.                          ||
+||                                                                            ||
+\\===================== http://subread.sourceforge.net/ ======================//
+
+
+out of 17152 with nonzero total read count
+adjusted p-value < 0.1
+LFC > 0 (up)     : 7198, 42% 
+LFC < 0 (down)   : 0, 0% 
+outliers [1]     : 164, 0.96% 
+low counts [2]   : 0, 0% 
+(mean count < 1)
+[1] see 'cooksCutoff' argument of ?results
+[2] see 'independentFiltering' argument of ?results
+
+        exon       intron         utr5        utr5*         utr3        utr3* 
+       54406        30411         2376         2872        26206        12036 
+  intergenic  exon.intron  utr5.intron   utr5*.exon utr5*.intron  utr3.intron 
+        1336        16673         1083         2270         1591         4428 
+  utr3*.exon utr3*.intron    utr5.utr3   utr5.utr3*   utr5*.utr3  utr5*.utr3* 
+       10836         3926           76          115          832          415 
+null device 
+          1 
+null device 
+          1 
+R version 3.4.1 (2017-06-30)
+Platform: x86_64-pc-linux-gnu (64-bit)
+Running under: CentOS Linux 7 (Core)
+
+Matrix products: default
+BLAS/LAPACK: /n/app/openblas/0.2.19/lib/libopenblas_core2p-r0.2.19.so
+
+locale:
+ [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
+ [3] LC_TIME=en_US.UTF-8        LC_COLLATE=en_US.UTF-8    
+ [5] LC_MONETARY=en_US.UTF-8    LC_MESSAGES=en_US.UTF-8   
+ [7] LC_PAPER=en_US.UTF-8       LC_NAME=C                 
+ [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+[11] LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C       
+
+attached base packages:
+[1] parallel  stats4    methods   stats     graphics  grDevices utils    
+[8] datasets  base     
+
+other attached packages:
+ [1] CLIPanalyze_0.0.10         GenomicAlignments_1.14.2  
+ [3] Rsamtools_1.30.0           Biostrings_2.46.0         
+ [5] XVector_0.18.0             GenomicFeatures_1.30.3    
+ [7] AnnotationDbi_1.40.0       DESeq2_1.18.1             
+ [9] SummarizedExperiment_1.8.1 DelayedArray_0.4.1        
+[11] matrixStats_0.55.0         Biobase_2.38.0            
+[13] rtracklayer_1.38.3         GenomicRanges_1.30.3      
+[15] GenomeInfoDb_1.14.0        IRanges_2.12.0            
+[17] S4Vectors_0.16.0           BiocGenerics_0.24.0       
+[19] dplyr_0.8.3                plyr_1.8.4                
+[21] data.table_1.12.6         
+
+loaded via a namespace (and not attached):
+ [1] httr_1.4.1             RMySQL_0.10.17         bit64_0.9-7           
+ [4] splines_3.4.1          Formula_1.2-3          assertthat_0.2.1      
+ [7] latticeExtra_0.6-28    blob_1.2.0             GenomeInfoDbData_1.0.0
+[10] progress_1.2.2         pillar_1.4.2           RSQLite_2.1.3         
+[13] backports_1.1.5        lattice_0.20-35        glue_1.3.1            
+[16] digest_0.6.23          RColorBrewer_1.1-2     checkmate_1.9.4       
+[19] colorspace_1.4-1       htmltools_0.4.0        Matrix_1.2-10         
+[22] XML_3.98-1.20          pkgconfig_2.0.3        biomaRt_2.34.2        
+[25] genefilter_1.60.0      zlibbioc_1.24.0        purrr_0.3.3           
+[28] xtable_1.8-4           scales_1.1.0           BiocParallel_1.12.0   
+[31] htmlTable_1.13.2       tibble_2.1.3           annotate_1.56.2       
+[34] ggplot2_3.2.1          nnet_7.3-12            lazyeval_0.2.2        
+[37] survival_2.41-3        magrittr_1.5           crayon_1.3.4          
+[40] memoise_1.1.0          biosignals_0.1.0       foreign_0.8-69        
+[43] prettyunits_1.0.2      tools_3.4.1            hms_0.5.2             
+[46] lifecycle_0.1.0        stringr_1.4.0          locfit_1.5-9.1        
+[49] munsell_0.5.0          cluster_2.0.6          compiler_3.4.1        
+[52] rlang_0.4.2            grid_3.4.1             RCurl_1.95-4.12       
+[55] rstudioapi_0.10        htmlwidgets_1.5.1      bitops_1.0-6          
+[58] base64enc_0.1-3        Rsubread_1.28.1        gtable_0.3.0          
+[61] DBI_1.0.0              R6_2.4.1               gridExtra_2.3         
+[64] knitr_1.26             zeallot_0.1.0          bit_1.1-14            
+[67] Hmisc_4.3-0            stringi_1.4.3          Rcpp_1.0.3            
+[70] geneplotter_1.56.0     vctrs_0.2.0            rpart_4.1-11          
+[73] acepack_1.4.1          tidyselect_0.2.5       xfun_0.11             

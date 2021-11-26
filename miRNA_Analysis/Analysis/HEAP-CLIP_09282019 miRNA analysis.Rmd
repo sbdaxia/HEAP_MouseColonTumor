@@ -1,0 +1,766 @@
+---
+title: "HEAP-CLIP_09282019 miRNA analysis"
+author: "Bing Shui"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: yes
+    toc_float: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## Preparation of input files
+The input files for this analysis are `.mirna` format files that are generated through `miraligner`. PCR duplicates are removed using `seqcluster`. 
+
+## Library loading and set up
+```{r message=FALSE, warning=FALSE}
+suppressMessages(
+  c(library(isomiRs),
+    library(DESeq2),
+    library(tximport),
+    library(pheatmap),
+    library(gridExtra),
+    library(grid),
+    library(ggplot2),
+    library(lattice),
+    library(reshape),
+    library(mixOmics),
+    library(gplots),
+    library(RColorBrewer),
+    library(readr),
+    library(dplyr),
+    library(data.table),
+    library(tidyverse),
+    library(rtracklayer),
+    library(Biostrings),
+    library(Rsubread),
+    library(ggrepel),
+    library(CLIPanalyze),
+    library(plotly)
+   )
+)
+```
+
+## Initial analysis
+### Compile input files into isomiRs
+Set working directory to the folder that contains only gene count `.mirna` files
+```{r message=FALSE, warning=FALSE}
+setwd("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/miRNA_Analysis/Gene Counts/HEAP-CLIP_09282019_miRNA")
+inDir = getwd()
+mirFiles = list.files(inDir, pattern=".mirna$", full.names = TRUE)
+basename(mirFiles)
+
+isomiRsampletable <- data.frame(
+  row.names = c('HVA_4_miRNA','HVA_5_miRNA','HVA_6_miRNA','HVAK_4_miRNA','HVAK_5_miRNA', 'HVAK_6_miRNA'),
+  condition = c('control','control','control','experimental','experimental', 'experimental'),
+  libType = c('single-end','single-end','single-end','single-end','single-end','single-end')
+)
+
+ids <- IsomirDataSeqFromFiles(mirFiles,
+                              coldata = isomiRsampletable,
+                              design = ~ condition)
+```
+
+### miRNA general abundance and count matrix
+```{r}
+dir.create("PDF_figure", showWarnings = FALSE)
+isoPlot(ids, type="all")
+
+pdf("PDF_figure/isoPlot.pdf",
+    width = 8,
+    height = 6)
+isoPlot(ids, type="all")
+dev.off()
+
+# overview of the counts
+head(counts(ids))
+
+# output the count matrix
+ids = isoNorm(ids, formula = ~ condition)
+rawCountTable <- as.data.frame(counts(ids, norm = TRUE))
+
+# normalization is doing using rlog from DESeq2
+pheatmap(counts(ids, norm=TRUE), 
+         annotation_col = data.frame(colData(ids)[,1,drop=FALSE]),
+         show_rownames = FALSE, scale="row")
+
+pdf("PDF_figure/Pheatmap.pdf",
+    width = 5,
+    height = 4)
+pheatmap(counts(ids, norm=TRUE), 
+         annotation_col = data.frame(colData(ids)[,1,drop=FALSE]),
+         show_rownames = FALSE, scale="row")
+dev.off()
+```
+
+### Differnetial Analysis
+```{r}
+# Perform differential analysis
+dds_analysis <- isoDE(ids, formula = ~condition)
+
+# Get a DESeq object using the count matrix
+dds <- DESeqDataSetFromMatrix(counts(ids),
+                             colData(ids), design = ~ condition)
+
+dds_norm <- estimateSizeFactors(dds)
+
+# transform the dataset for MA plot and PCA plotting
+dds_transform <- varianceStabilizingTransformation(dds)
+plotMA(dds_analysis)
+
+pdf("PDF_figure/QC_MAPlot.pdf",
+    width = 5,
+    height = 4)
+plotMA(dds_analysis)
+dev.off()
+
+plotPCA(dds_transform) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1) +
+  xlim(-12,30) +ylim(-20,15)
+
+pdf("PDF_figure/QC_PCAPlot.pdf",
+    width = 6,
+    height = 4)
+plotPCA(dds_transform) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1) +
+  xlim(-12,30) +ylim(-20,15)
+dev.off()
+
+#Boxplots
+pseudoCount = log2(rawCountTable + 1)
+suppressMessages(df <- melt(pseudoCount, variable_name = "Samples"))
+df <- data.frame(df, Condition = substr(df$variable,1,4))
+
+ggplot(df, aes(x=variable, y=value, fill = Condition)) + geom_boxplot() + xlab("") + 
+  ylab(expression(log[2](count+1))) + scale_fill_manual(values = c("#619CFF", "#F564E3")) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+pdf("PDF_figure/QC_BoxPlot.pdf",
+    width = 5,
+    height = 4)
+ggplot(df, aes(x=variable, y=value, fill = Condition)) + geom_boxplot() + xlab("") + 
+  ylab(expression(log[2](count+1))) + scale_fill_manual(values = c("#619CFF", "#F564E3")) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+```
+
+There is good seperation between HVA and HVAK samples. I can proceed to mix the miRNA datasets from HEAP-CLIP_052119 and HEAP-CLIP_09282019.
+
+## Combined analysis
+### Re-compile filtered input files into isomiRs
+Set working directory to the folder that contains only gene count `.mirna` files
+```{r message=FALSE, warning=FALSE}
+setwd("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/miRNA_Analysis/Gene Counts")
+inDir = getwd()
+mirFiles = list.files(inDir, pattern=".mirna$", full.names = TRUE)
+basename(mirFiles)
+
+isomiRsampletable <- data.frame(
+  row.names = c('HVA_1_miR','HVA_2_miR','HVA_3_miR','HVA_4_miR','HVA_5_miR','HVA_6_miR','HVAK_1_miR','HVAK_2_miR','HVAK_3_miR','HVAK_4_miR','HVAK_5_miR','HVAK_6_miR'),
+  condition = c('control','control','control','control','control','control','experimental', 'experimental', 'experimental','experimental', 'experimental', 'experimental'),
+  libType = c('single-end','single-end','single-end','single-end','single-end','single-end','single-end','single-end','single-end','single-end','single-end','single-end'),
+  batch = c('1','1','1','2','2','2','1','1','1','2','2','2')
+)
+
+ids <- IsomirDataSeqFromFiles(mirFiles,
+                              coldata = isomiRsampletable,
+                              design = ~ batch + condition)
+```
+
+### miRNA general abundance and count matrix
+```{r}
+isoPlot(ids, type="all")
+
+pdf("PDF_figure/isoPlot_merged.pdf",
+    width = 8,
+    height = 6)
+isoPlot(ids, type="all")
+dev.off()
+
+# overview of the counts
+head(counts(ids))
+
+# output the count matrix
+rawCountTable <- as.data.frame(counts(ids))
+
+```
+
+### Differnetial Analysis using the DESeq2 package
+#### Establish DESeq DataSet
+```{r}
+# Get a DESeq object using the count matrix
+dds <- DESeqDataSetFromMatrix(rawCountTable,
+                             colData(ids), design = ~ batch + condition)
+
+dds_analysis <- DESeq(dds)
+```
+MA plot was generated.
+```{r}
+plotMA(dds_analysis)
+
+pdf("PDF_figure/QC_MAPlot_merged.pdf",
+    width = 5,
+    height = 4)
+plotMA(dds_analysis)
+dev.off()
+```
+#### Quality Inspection of the Gene Count Data
+##### Generate raw count table that contains the simple counts of each gene
+Data is transformed and pseudocount is calculated.
+```{r}
+dds_norm <- estimateSizeFactors(dds)
+rawCountTable <- as.data.frame(counts(dds_norm, normalized = TRUE))
+rawCountTable_no_norm <- as.data.frame(counts(dds_norm))
+pseudoCount = log2(rawCountTable + 1)
+grid.arrange(
+  ggplot(pseudoCount, aes(x= HVA_1_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_1_miR"), 
+  ggplot(pseudoCount, aes(x= HVA_2_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_2_miR"),
+  ggplot(pseudoCount, aes(x= HVA_3_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_3_miR"),
+  ggplot(pseudoCount, aes(x= HVA_4_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_4_miR"), 
+  ggplot(pseudoCount, aes(x= HVA_5_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_5_miR"),
+  ggplot(pseudoCount, aes(x= HVA_6_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_6_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_1_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_1_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_2_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_2_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_3_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_3_miR"), 
+  ggplot(pseudoCount, aes(x= HVAK_4_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_4_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_5_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_5_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_6_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_6_miR"), 
+  nrow = 3)
+
+pdf("PDF_figure/QC_histogram.pdf",
+    width = 10,
+    height = 8)
+grid.arrange(
+  ggplot(pseudoCount, aes(x= HVA_1_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_1_miR"), 
+  ggplot(pseudoCount, aes(x= HVA_2_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_2_miR"),
+  ggplot(pseudoCount, aes(x= HVA_3_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_3_miR"),
+  ggplot(pseudoCount, aes(x= HVA_4_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_4_miR"), 
+  ggplot(pseudoCount, aes(x= HVA_5_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_5_miR"),
+  ggplot(pseudoCount, aes(x= HVA_6_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVA_6_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_1_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_1_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_2_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_2_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_3_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_3_miR"), 
+  ggplot(pseudoCount, aes(x= HVAK_4_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_4_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_5_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_5_miR"),
+  ggplot(pseudoCount, aes(x= HVAK_6_miR)) + xlab(expression(log[2](count + 1))) + ylab("Number of miRNAs") + 
+    geom_histogram(colour = "white", fill = "#525252", binwidth = 0.6) + labs(title = "HVAK_6_miR"), 
+  nrow = 3)
+dev.off()
+```
+
+##### Between-sample distribution
+Check on the gene count distribution across all genes.
+```{r}
+#Boxplots
+suppressMessages(df <- melt(pseudoCount, variable_name = "Samples"))
+df <- data.frame(df, Condition = substr(df$variable,1,4))
+
+ggplot(df, aes(x=variable, y=value, fill = Condition)) + geom_boxplot() + xlab("") + 
+  ylab(expression(log[2](count+1))) + scale_fill_manual(values = c("#619CFF", "#F564E3")) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+pdf("PDF_figure/QC_BoxPlot_merged.pdf",
+    width = 5,
+    height = 4)
+ggplot(df, aes(x=variable, y=value, fill = Condition)) + geom_boxplot() + xlab("") + 
+  ylab(expression(log[2](count+1))) + scale_fill_manual(values = c("#619CFF", "#F564E3")) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+dev.off()
+
+#Histograms and density plots
+ggplot(df, aes(x=value, colour = variable, fill = variable)) + ylim(c(0, 0.25)) + 
+  geom_density(alpha = 0.2, size = 1.25) + facet_wrap(~ Condition) +
+  theme(legend.position = "top") + xlab(expression(log[2](count+1)))
+
+pdf("PDF_figure/QC_densityPlot_merged.pdf",
+    width = 8,
+    height = 6)
+ggplot(df, aes(x=value, colour = variable, fill = variable)) + ylim(c(0, 0.25)) + 
+  geom_density(alpha = 0.2, size = 1.25) + facet_wrap(~ Condition) +
+  theme(legend.position = "top") + xlab(expression(log[2](count+1)))
+dev.off()
+```
+
+##### Generate MA plots 
+MA plots are used to check for imbalance in sequencing depth between samples of the same condition. I did not generate MA plot for all library pairs. But the example pairs I selected show that there are imbalance in sequencing depth, but the imbalance is quite random and this is common in RNA-Seq datasets.
+
+```{r}
+## HVA1 vs HVA2
+x = pseudoCount[, 1]
+y = pseudoCount[, 2]
+## M-values
+M = x - y
+## A-values
+A = (x + y)/2
+df = data.frame(A, M)
+
+suppressWarnings(
+ggplot(df, aes(x = A, y = M)) + geom_point(size = 1.5, alpha = 1/5) +
+  geom_hline(color = "blue3", yintercept = 0) + stat_smooth(se = FALSE, method = "loess", color = "red3") + labs(title = "HVA_1_miR vs HVA_2_miR"))
+
+## HVA1 vs HVA3
+x = pseudoCount[, 1]
+y = pseudoCount[, 3]
+## M-values
+M = x - y
+## A-values
+A = (x + y)/2
+df = data.frame(A, M)
+
+suppressWarnings(
+ggplot(df, aes(x = A, y = M)) + geom_point(size = 1.5, alpha = 1/5) +
+  geom_hline(color = "blue3", yintercept = 0) + stat_smooth(se = FALSE, method = "loess", color = "red3") + labs(title = "HVA_1_miR vs HVA_3_miR"))
+
+## HVA1 vs HVAK1
+x = pseudoCount[, 1]
+y = pseudoCount[, 4]
+## M-values
+M = x - y
+## A-values
+A = (x + y)/2
+df = data.frame(A, M)
+
+suppressWarnings(
+ggplot(df, aes(x = A, y = M)) + geom_point(size = 1.5, alpha = 1/5) +
+  geom_hline(color = "blue3", yintercept = 0) + stat_smooth(se = FALSE, method = "loess", color = "red3") + labs(title = "HVA_1_miR vs HVAK_1_miR"))
+
+## HVA1 vs HVAK2
+x = pseudoCount[, 1]
+y = pseudoCount[, 5]
+## M-values
+M = x - y
+## A-values
+A = (x + y)/2
+df = data.frame(A, M)
+
+suppressWarnings(
+ggplot(df, aes(x = A, y = M)) + geom_point(size = 1.5, alpha = 1/5) +
+  geom_hline(color = "blue3", yintercept = 0) + stat_smooth(se = FALSE, method = "loess", color = "red3") + labs(title = "HVA_1_miR vs HVAK_2_miR"))
+
+## HVA1 vs HVAK3
+x = pseudoCount[, 1]
+y = pseudoCount[, 6]
+## M-values
+M = x - y
+## A-values
+A = (x + y)/2
+df = data.frame(A, M)
+
+suppressWarnings(
+ggplot(df, aes(x = A, y = M)) + geom_point(size = 1.5, alpha = 1/5) +
+  geom_hline(color = "blue3", yintercept = 0) + stat_smooth(se = FALSE, method = "loess", color = "red3") + labs(title = "HVA_1_miR vs HVAK_3_miR"))
+```
+##### Clustering of the sample-to-sample distances
+This is the sanity check step to confirm that under a un-supervised clustering, HF and HFK samples will cluster together. For some reason, the code is giving error when try to plot this heatmap in RStudio, so I created a pdf file that contains the heatmap in the Analysis folder named `Hierchical Clustering.pnf`
+```{r}
+dds_transform <- varianceStabilizingTransformation(dds)
+rawCountTable_transform <- as.data.frame(assay(dds_transform))
+pseudoCount_transform = log2(rawCountTable_transform + 1)
+mat.dist = pseudoCount_transform
+mat.dist = as.matrix(dist(t(mat.dist)))
+mat.dist = mat.dist/max(mat.dist)
+png('Hierchical_Clustering.png')
+cim(mat.dist, symkey = FALSE, margins = c(6, 6))
+suppressMessages(dev.off())
+
+pdf("PDF_figure/Hierchical_Clustering.pdf",
+    width = 6,
+    height = 6)
+cim(mat.dist, symkey = FALSE, margins = c(6, 6))
+dev.off()
+```
+Final output is following:
+![Hierchical Clustering](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/miRNA_Analysis/Analysis/Hierchical_Clustering.png)
+
+##### Principal component plot of the samples
+I performed PCA analysis on all datasets to confirm that samples from the same condition group together. This step has to be performed using `varianceStabelizingTransformed` dataset, so that the high variance in genes with low counts will not skew the data.
+
+The top 500 most variable genes are selected for PCA analysis.
+
+```{r}
+plotPCA(dds_transform, intgroup = "condition", ntop = 500) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1) + xlim(-7,20) + ylim(-10,10)
+
+pdf("PDF_figure/QC_PCAPlot_merged.pdf",
+    width = 6,
+    height = 4)
+plotPCA(dds_transform, intgroup = "condition", ntop = 500) +   
+  geom_text(aes(label=name), vjust = 2, hjust = -0.1) + xlim(-7,20) + ylim(-10,10)
+dev.off()
+```
+
+##### Outout gene counts and DE analysis result
+```{r}
+dds_result <- results(dds_analysis, contrast = c("condition", "experimental", "control"))
+dds_result <- lfcShrink(dds_analysis, contrast = c("condition", "experimental", "control"), res = dds_result, type = "normal")
+write.csv(rawCountTable, "miRNA_counts.csv")
+write.csv(as.data.frame(dds_result), "miRNA_de.csv")
+```
+
+##### Draw heatmap for transcripts that are significantly dysregulated in KRasG12D samples
+Genes that were not detected were removed from the list. Genes with `padj` < 0.05 were considered significantly dysregulated. Their normalized counts were z-scored and used for plotting the heatmap.
+
+```{r}
+suppressMessages(library(mosaic))
+
+dif_analysis <- as.data.frame(results(dds_analysis))
+sig_dif <- subset(dif_analysis, dif_analysis$padj < 0.05)
+sig_index <- c()
+for (i in 1:dim(sig_dif)[1]) {
+  sig_index <- c(sig_index ,grep(rownames(sig_dif)[i], rownames(pseudoCount)))
+}
+sig_count <- pseudoCount[sig_index,]
+sig_dif <- cbind(sig_dif, sig_count)
+for (i in 1:dim(sig_dif)[1]) {
+  sig_dif[i,7:18] <- zscore(as.numeric(sig_dif[i,7:18]))
+}
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(256)
+heatmap_matrix <- as.matrix(sig_dif[,7:18])
+
+png('HVAK vs HVA microRNASeq.png',
+    width = 600,
+    height = 1000,
+    res = 100,
+    pointsize = 8)
+par(cex.main=1.1)
+heatmap.2(heatmap_matrix,
+          main = "Differentially expressed\nmiRNA in colon tumor\npadj < 0.05",
+          density.info = "none",
+          key = TRUE,
+          lwid = c(3,7),
+          lhei = c(1,7),
+          labRow = rownames(heatmap_matrix),
+          col=my_palette,
+          margins = c(12,11),
+          symbreaks = TRUE,
+          trace = "none",
+          dendrogram = "row",
+          cexCol = 2,
+          Colv = "NA")
+dev.off()
+
+pdf("PDF_figure/Heatmap_merged.pdf",
+    width = 7,
+    height = 10)
+par(cex.main=1.1)
+heatmap.2(heatmap_matrix,
+          main = "Differentially expressed\nmiRNA in colon tumor\npadj < 0.05",
+          density.info = "none",
+          key = TRUE,
+          lwid = c(3,7),
+          lhei = c(1,7),
+          labRow = rownames(heatmap_matrix),
+          col=my_palette,
+          margins = c(12,11),
+          symbreaks = TRUE,
+          trace = "none",
+          dendrogram = "row",
+          cexCol = 2,
+          Colv = "NA")
+dev.off()
+```
+
+Final output is ![Heatmap for differential genes](/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/miRNA_Analysis/Analysis/HVAK vs HVA microRNASeq.png)
+
+##### Scatter plot, MA plot and Volcano plot for data visualization
+
+```{r}
+# Scatter plot
+dif_analysis$KrasG12D_mean <- rowMeans(pseudoCount[,7:12])
+dif_analysis$KrasWT_mean <- rowMeans(pseudoCount[,1:6])
+ggplot(dif_analysis, aes(x = KrasWT_mean, y = KrasG12D_mean)) +
+  xlab("HVA_Average(log2)") + ylab("HVAK_Average(log2)") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+  labs(title = "HVA vs HVAK Scatter Plot")
+
+pdf("PDF_figure/ScatterPlot_merged.pdf",
+    width = 5,
+    height = 4)
+ggplot(dif_analysis, aes(x = KrasWT_mean, y = KrasG12D_mean)) +
+  xlab("HVA_Average(log2)") + ylab("HVAK_Average(log2)") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+  labs(title = "HVA vs HVAK Scatter Plot")
+dev.off()
+
+# MA plot
+ggplot(dif_analysis, aes(x = log(baseMean,2), y = log2FoldChange)) +
+  xlab("Average Expression") + ylab("LFC") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+labs(title = "HVA vs HVAK MA Plot") + ylim(-4,4)
+
+pdf("PDF_figure/MAPlot_merged.pdf",
+    width = 5,
+    height = 4)
+ggplot(dif_analysis, aes(x = log(baseMean,2), y = log2FoldChange)) +
+  xlab("Average Expression") + ylab("LFC") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+labs(title = "HVA vs HVAK MA Plot") + ylim(-4,4)
+dev.off()
+
+# Volcano Plot
+ggplot(dif_analysis, aes(x = log2FoldChange, y = -log(padj,10))) +
+  xlab("LFC") + ylab("-log10(P value)") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+labs(title = "HVA vs HVAK Volcano Plot") + xlim(-4,4)
+
+pdf("PDF_figure/VolcanoPlot_merged.pdf",
+    width = 5,
+    height = 4)
+ggplot(dif_analysis, aes(x = log2FoldChange, y = -log(padj,10))) +
+  xlab("LFC") + ylab("-log10(P value)") + 
+  geom_point(data = dif_analysis, alpha = 0.5, size = 1, color = "grey") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange > 0), alpha = 0.5, size = 1, color = "red") +
+  geom_point(data = subset(dif_analysis, padj < 0.05 & log2FoldChange < 0), alpha = 0.5, size = 1, color = "blue") +
+labs(title = "HVA vs HVAK Volcano Plot") + xlim(-4,4)
+dev.off()
+```
+
+## Prepare miRNA family level data for analysis with peaks
+Load miRNA database
+```{r}
+mirna.info <- fread("/Users/mizuhi/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/miRNA_Analysis/Analysis/miR_Family_Info.txt", check.names = TRUE)
+mirna.info <- mirna.info[Species.ID == 10090]
+mirna.info[MiRBase.ID == "mmu-miR-124-3p.1", MiRBase.ID := "mmu-miR-124-3p"]
+mirna.info[miR.family == "miR-124-3p.1", miR.family := "miR-124-3p"]
+mirna.info[, seed := gsub("U", "T", Seed.m8)]
+```
+Load miRNA counts.
+```{r}
+mirna.counts <- rawCountTable_no_norm
+mirna.counts$miRNA <- rownames(mirna.counts)
+mirna.counts <- as.data.table(mirna.counts)
+
+mirna.counts$count <-
+    rowSums(mirna.counts[,-13])
+mirna.counts$count.hva <-
+    rowSums(mirna.counts[, c("HVA_1_miR", "HVA_2_miR", "HVA_3_miR", "HVA_4_miR", "HVA_5_miR", "HVA_6_miR")])
+mirna.counts$count.hvak <-
+    rowSums(mirna.counts[, c("HVAK_1_miR", "HVAK_2_miR", "HVAK_3_miR", "HVAK_4_miR", "HVAK_5_miR", "HVAK_6_miR")])
+mirna.counts <- mirna.counts[order(-count)]
+```
+
+```{r}
+mirna.counts[, miRNA.shortname := miRNA]
+which.to.change <- startsWith(mirna.counts$miRNA.shortname, "mmu-")
+mirna.counts[which.to.change, ]$miRNA.shortname <-
+    sapply(strsplit(mirna.counts[which.to.change, ]$miRNA.shortname, "mmu-"),
+           "[", 2)
+which.to.change <- endsWith(mirna.counts$miRNA.shortname, "-5p")
+mirna.counts[which.to.change]$miRNA.shortname <-
+    sapply(strsplit(mirna.counts[which.to.change]$miRNA.shortname, "-5p"),
+           "[", 1)
+which.to.change <- endsWith(mirna.counts$miRNA.shortname, "-3p")
+mirna.counts[which.to.change]$miRNA.shortname <-
+    sapply(strsplit(mirna.counts[which.to.change]$miRNA.shortname, "-3p"),
+           "[", 1)
+
+```
+
+```{r}
+dds <- dds[rowSums(DESeq2::counts(dds)) > 200]
+dds <- DESeq(dds)
+plotMA(dds)
+
+mir.dif <- as.data.frame(results(dds, alpha = 0.05, contrast = c("condition", "experimental", "control")))
+mir.dif$logP <- -1 * log10(mir.dif$padj)
+mir.dif$miRNA <- rownames(mir.dif)
+mirna.counts.DGE <- merge(mirna.counts, mir.dif, by = "miRNA", all = TRUE)
+setwd("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Datafiles")
+saveRDS(mirna.counts.DGE, "mirna-counts-deseq-09282019.rds")
+```
+
+```{r}
+mirna.info <- merge(mirna.info, mirna.counts[, .(MiRBase.ID = miRNA,
+                                                 HVA_1_miR, HVA_2_miR, HVA_3_miR, HVA_4_miR, HVA_5_miR,
+                                                 HVA_6_miR, HVAK_1_miR, HVAK_2_miR, HVAK_3_miR, HVAK_4_miR,
+                                                 HVAK_5_miR, HVAK_6_miR)],
+                    by = "MiRBase.ID", all.x = TRUE)
+
+mirna.info[, HVA_1_miR := ifelse(is.na(HVA_1_miR), 0, HVA_1_miR)]
+mirna.info[, HVA_2_miR := ifelse(is.na(HVA_2_miR), 0, HVA_2_miR)]
+mirna.info[, HVA_3_miR := ifelse(is.na(HVA_3_miR), 0, HVA_3_miR)]
+mirna.info[, HVA_4_miR := ifelse(is.na(HVA_4_miR), 0, HVA_4_miR)]
+mirna.info[, HVA_5_miR := ifelse(is.na(HVA_5_miR), 0, HVA_5_miR)]
+mirna.info[, HVA_6_miR := ifelse(is.na(HVA_6_miR), 0, HVA_6_miR)]
+mirna.info[, HVAK_1_miR := ifelse(is.na(HVAK_1_miR), 0, HVAK_1_miR)]
+mirna.info[, HVAK_2_miR := ifelse(is.na(HVAK_2_miR), 0, HVAK_2_miR)]
+mirna.info[, HVAK_3_miR := ifelse(is.na(HVAK_3_miR), 0, HVAK_3_miR)]
+mirna.info[, HVAK_4_miR := ifelse(is.na(HVAK_4_miR), 0, HVAK_4_miR)]
+mirna.info[, HVAK_5_miR := ifelse(is.na(HVAK_5_miR), 0, HVAK_5_miR)]
+mirna.info[, HVAK_6_miR := ifelse(is.na(HVAK_6_miR), 0, HVAK_6_miR)]
+
+
+mirna.info[, HVA_1_family := sum(HVA_1_miR),
+           by = miR.family]
+mirna.info[, HVA_2_family := sum(HVA_2_miR),
+           by = miR.family]
+mirna.info[, HVA_3_family := sum(HVA_3_miR),
+           by = miR.family]
+mirna.info[, HVA_4_family := sum(HVA_4_miR),
+           by = miR.family]
+mirna.info[, HVA_5_family := sum(HVA_5_miR),
+           by = miR.family]
+mirna.info[, HVA_6_family := sum(HVA_6_miR),
+           by = miR.family]
+mirna.info[, HVAK_1_family := sum(HVAK_1_miR),
+           by = miR.family]
+mirna.info[, HVAK_2_family := sum(HVAK_2_miR),
+           by = miR.family]
+mirna.info[, HVAK_3_family := sum(HVAK_3_miR),
+           by = miR.family]
+mirna.info[, HVAK_4_family := sum(HVAK_4_miR),
+           by = miR.family]
+mirna.info[, HVAK_5_family := sum(HVAK_5_miR),
+           by = miR.family]
+mirna.info[, HVAK_6_family := sum(HVAK_6_miR),
+           by = miR.family]
+
+mirna.counts.family <- mirna.info[, .(miR.family, Seed.m8, Family.Conservation., 
+                                      HVA_1_family, HVA_2_family, HVA_3_family, HVA_4_family, HVA_5_family,
+                                      HVA_6_family, HVAK_1_family, HVAK_2_family, HVAK_3_family, HVAK_4_family,
+                                      HVAK_5_family, HVAK_6_family)]
+mirna.counts.family <- mirna.counts.family[!duplicated(mirna.counts.family)]
+setwd("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Datafiles")
+saveRDS(mirna.counts.family, "mirna-counts-by-family-09282019.rds")
+
+```
+
+```{r}
+dds.family <- DESeqDataSetFromMatrix(mirna.counts.family[,4:15],
+                              colData = data.frame(row.names = colnames(mirna.counts.family[,4:15]),
+                                                   condition = c(rep("HVA",6), rep("HVAK", 6)),
+                                                   batch = c('1','1','1','2','2','2','1','1','1','2','2','2')),
+                              design = ~ batch + condition)
+
+rownames(dds.family) <- mirna.counts.family$miR.family
+dds.family <- dds.family[rowSums(DESeq2::counts(dds.family))>200]
+dds.family <- DESeq(dds.family) 
+
+mirna.family.res <- results(dds.family, alpha = 0.05, contrast = c("condition", "HVAK", "HVA"))
+mirna.family.DGE <- as.data.frame(mirna.family.res)
+mirna.family.DGE$miR.family <- rownames(mirna.family.DGE)
+mirna.family.DGE <- mirna.family.DGE[order(-mirna.family.DGE$log2FoldChange),]
+setwd("~/OneDrive - Harvard University/Haigis Lab/Projects/Halo-Ago2/Halo-Ago-KRas/Raw Data/HEAP-CLIP/HEAP_09282019/Analysis/CLIP_Analysis/Data Visualization/Datafiles")
+saveRDS(mirna.family.DGE, "mirna-counts-deseq-by-family-09282019.rds")
+```
+
+```{r}
+cal.z.score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+
+mirna.counts.family.norm <- DESeq2::counts(dds.family, normalized = TRUE)
+mirna.counts.family.norm.log <- log2(mirna.counts.family.norm + 1)
+mirna.counts.family.norm.z <- as.data.frame(t(apply(mirna.counts.family.norm.log, 1, cal.z.score)))
+```
+
+```{r}
+select <- subset(mirna.family.DGE, baseMean > 2000)
+select <- select$miR.family
+pheatmap(mirna.counts.family.norm.z[select,], 
+         cluster_rows=TRUE, show_rownames=TRUE, cluster_cols=TRUE,
+         border_color = NA, fontsize_row = 8)
+```
+
+```{r}
+pdf("PDF_figure/Pheatmap_family.pdf",
+    width = 8,
+    height = 5)
+pheatmap(mirna.counts.family.norm.z[select,], 
+         cluster_rows=TRUE, show_rownames=TRUE, cluster_cols=TRUE,
+         border_color = NA, fontsize_row = 8)
+dev.off()
+```
+
+```{r}
+df <- mirna.family.DGE
+df$logP <- -log10(mirna.family.DGE$padj)
+p3 <- ggplot(data = df, aes(x = log2FoldChange, y = logP, label = miR.family, size = baseMean)) +
+  geom_point(alpha = 0.6, colour = "#d08031", shape = 1) + 
+  #geom_point(data = family.highlight, aes(x = log2FoldChange, y = logP), colour = my.colors[1]) + 
+  #geom_point(data = df[mir.highlight[1],], aes(x = log2FoldChange, y = logP), colour = my.colors[9], size = dotsize) +
+  #geom_point(data = df[df$Row.names %in% mir.highlight[2:6],], aes(x = log2FoldChange, y = logP), colour = my.colors[4], size = dotsize) +
+  #geom_point(data = df[mir.highlight[7],], aes(x = log2FoldChange, y = logP), colour = my.colors[2], size = dotsize) +
+  #geom_point(data = df[mir.highlight[8:11],], aes(x = log2FoldChange, y = logP), colour = my.colors[4], size = dotsize) +
+  #geom_point(data = df[df$Row.names %in% mir.highlight[12:13],], aes(x = log2FoldChange, y = logP), colour = my.colors[6], size = dotsize) +
+  #geom_point(data = df[mir.highlight[13],], aes(x = log2FoldChange, y = logP), colour = my.colors[4], size = dotsize) +
+  xlab("Fold change log2 (HVAK / HVA)") +
+  ylab("-log10(FDR)") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(size=12, margin = margin(t = 10)),
+    axis.title.y = element_text(size=12, margin = margin(r = 10)),
+    axis.text = element_text(size=10),
+    axis.line.y = element_line(size = 0.5),
+    axis.line.x = element_line(size = 0.5),
+    axis.ticks.x = element_line(size = 0),
+    axis.ticks.y = element_line(size = 0.5),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) + xlim(-4,3)
+p4<- ggplotly(p3)
+p4
+
+
+select_mir <- c("let-7-5p/miR-98-5p", "miR-29-3p", "miR-200-3p/429-3p", "miR-17-5p/20-5p/93-5p/106-5p", "miR-194-5p")
+df$select <- ""
+df$select[df$miR.family %in% select_mir] <- df$miR.family[df$miR.family %in% select_mir]
+
+
+pdf("PDF_figure/VolcanoPlot_expression.pdf",
+    width = 5,
+    height = 4)
+ggplot(data = df, aes(x = log2FoldChange, y = logP, label = select, size = baseMean)) +
+  geom_point(alpha = 0.6, colour = "#d08031", shape = 1) + 
+  geom_text_repel(box.padding = 0.5, max.overlaps = Inf) +
+  geom_point(data = subset(df, rownames(df) %in% select_mir), alpha = 2, colour = "black", shape = 1) + 
+  xlab("Fold change log2 (HVAK / HVA)") +
+  ylab("-log10(FDR)") +
+  geom_hline(yintercept = -log10(0.05))+
+  theme_bw() +
+  theme(panel.border = element_blank(),
+    panel.background = element_blank(),
+    panel.grid.major = element_blank(), 
+    panel.grid.minor = element_blank(),
+    axis.title.x = element_text(size=12, margin = margin(t = 10)),
+    axis.title.y = element_text(size=12, margin = margin(r = 10)),
+    axis.text = element_text(size=10),
+    axis.line.y = element_line(size = 0.5),
+    axis.line.x = element_line(size = 0.5),
+    axis.ticks.x = element_line(size = 0),
+    axis.ticks.y = element_line(size = 0.5),
+    plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) + xlim(-4,3)
+dev.off()
+```

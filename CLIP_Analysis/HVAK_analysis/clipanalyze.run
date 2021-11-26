@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH -p short
+#SBATCH -t 0-12:00
+#SBATCH --mem 16G
+#SBATCH -c 1
+#SBATCH -e ca.%j.err
+#SBATCH -o ca.%j.out
+#SBATCH --x11=batch
+
+module load gcc/6.2.0 R/3.4.1
+Rscript clipanalyze.Rscript

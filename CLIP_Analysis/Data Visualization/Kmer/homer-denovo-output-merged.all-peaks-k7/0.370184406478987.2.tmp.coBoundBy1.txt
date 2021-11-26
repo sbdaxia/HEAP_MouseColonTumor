@@ -1,0 +1,4 @@
+#Name (cmd = mergePeaks Kmer/homer-denovo-output-merged.all-peaks-k7/bg.clean.pos Kmer/homer-denovo-output-merged.all-peaks-k7/target.clean..pos -d given -cobound 1 -prefix Kmer/homer-denovo-output-merged.all-peaks-k7/0.370184406478987.2.tmp)	chr	start	end	strand	stat	stat2	Kmer/homer-denovo-output-merged.all-peaks-k7/target.clean..pos
+BG1-Dup15017	chr7	80225757	80225771	+	0.000	0.000	1-Dup3957
+BG1-Dup17628	chrM	13017	13034	+	0.000	0.000	1-Dup4658
+BG1-Dup4648	chr13	63285934	63285951	+	0.000	0.000	1-Dup1228

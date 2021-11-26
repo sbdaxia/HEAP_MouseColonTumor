@@ -1,0 +1,1 @@
+cmd = Kmer/overlap-peaks-k7-windows.bed mm10 Kmer/homer-denovo-output-overlap-peaks-k7 -bg Kmer/overlap-peaks-k7-windows-background.bed -len 8 -size given -rna -noweight -minlp -5 -nlen 2 -N 200000 -bits -p 10 -cache 1000

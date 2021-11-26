@@ -1,0 +1,6 @@
+"","ID","Description","GeneRatio","BgRatio","pvalue","p.adjust","qvalue","geneID","Count"
+"GO:0005739","GO:0005739","mitochondrion","55/209","475/3818",1.52524388242046e-08,4.3011877484257e-06,4.15829647944105e-06,"Tfcp2l1/Rnasel/Glul/Txnrd1/Cs/Foxo3/Mdh1/Mat2b/Fasn/Mthfd1/Rsad2/Mrs2/Eci2/Selenoo/Tfrc/Parp9/Ehhadh/Mapk14/Tap1/Stard4/Fth1/Gbf1/Gstp1/Arl2/Atad1/Hspa5/Ivd/Pdia3/Ctsa/Atp5c1/Ppp6c/Dbt/Adh1/Adh5/Aldh1b1/Pars2/Nrd1/Txn1/Uqcrh/Pisd/Mgst1/Cycs/Atp6v1e1/Uqcrc2/Urah/Nudt19/Plpbp/Prdx2/Arl2bp/Pdp2/Mtus1/Casp4/Acaa1a/Pts/ND5",55
+"GO:0005790","GO:0005790","smooth endoplasmic reticulum","6/209","17/3818",0.000186390335587077,0.0161969101124209,0.015658826872404,"Hsp90b1/Pdia6/Dnajc3/Hspa5/Pdia3/Calr",6
+"GO:0005777","GO:0005777","peroxisome","9/209","40/3818",0.000229743405849942,0.0161969101124209,0.015658826872404,"Eci2/Ehhadh/Xdh/Gbf1/Atad1/Mgst1/Urah/Nudt19/Acaa1a",9
+"GO:0042579","GO:0042579","microbody","9/209","40/3818",0.000229743405849942,0.0161969101124209,0.015658826872404,"Eci2/Ehhadh/Xdh/Gbf1/Atad1/Mgst1/Urah/Nudt19/Acaa1a",9
+"GO:0043209","GO:0043209","myelin sheath","15/209","105/3818",0.00049276616272602,0.0277920115777475,0.0268687233991662,"Glul/Atp1b1/Mdh1/Pgam1/Actr1a/Hspa5/Pdia3/Atp5c1/Car13/Car2/Atp1a1/Gstm1/Cycs/Uqcrc2/Prdx2",15

@@ -1,0 +1,87 @@
+#!/usr/bin/env Rscript
+library(data.table)
+library(plyr)
+library(dplyr)
+library(rtracklayer)
+library(DESeq2)
+library(CLIPanalyze)
+library(GenomicAlignments)
+
+#read in experiment
+exp.files<-list.files(".", ".*Exp.*\\.bam$")
+#read in control
+ic.files<-list.files(".", ".*IC.*\\.bam$")
+#set sample names
+sample.names<-c(paste("Exp", 1:length(exp.files), sep=""), paste("IC", 1:length(ic.files), sep=""))
+
+setDTthreads(1) #confine to 1 thread
+
+peak.data<- findPeaks(c(exp.files, 
+                            ic.files), 
+                          sample.names,
+                          condition = c(rep(1, length(exp.files)), rep(0, length(ic.files))),
+                          annot.order = c("utr3", "utr3*", "utr5", "utr5*",
+                                          "exon", "intron"),
+                          exclude.mirna.peaks = TRUE,
+                          genome = "mm10",
+                          bandwidth = 60,
+                          count.threshold = 10,
+			  extend.slice = 10,
+			  extend.peaks.in.genes = 150,
+                          count.exons.only = FALSE,
+                          transform.chr.names = TRUE,
+                          nthreads = 1)
+#pull date
+currentDate <- Sys.Date() 
+#save RDS
+saveRDS(peak.data, file=paste("peakdata.", currentDate, ".rds", sep=""))
+
+peak.signif = subset(peak.data$peaks, log2FC > 0)
+
+bedfile <- data.frame(seqnames=seqnames(peak.signif),
+                      starts=start(peak.signif)-1,
+                      ends=end(peak.signif),
+                      names=peak.signif$name,
+                      scores=peak.signif$count,
+                      strands=strand(peak.signif),
+                      exon=peak.signif$exon,
+                      intron=peak.signif$intron,
+                      utr5=peak.signif$utr5,
+                      utr5star=peak.signif$"utr5*",
+                      utr3=peak.signif$utr3,
+                      utr3star=peak.signif$"utr3*",
+                      intergenic=peak.signif$intergenic,
+                      mirna=peak.signif$mirna,
+                      annot=peak.signif$annot,
+                      padj=peak.signif$padj,
+                      log2FC=peak.signif$log2FC)
+
+write.table(bedfile, file=paste("peakdata.", currentDate, ".bed", sep=""), 
+            sep="\t", 
+            quote=F, 
+            row.names=F, 
+            col.names=F)
+
+file.list <-list.files(".", ".*\\.bam$")
+
+for (i in file.list) {
+  filename <- substr(i, 1, (nchar(i)-4))
+  alignment <- readGAlignments(i)
+  reads_coverage <- coverage(alignment)
+  export.bw(reads_coverage, con = paste(filename, ".bw", sep=""))
+}
+
+#print peaks
+print(countFeatures(peak.data$peaks))
+# do MA plots for genes and peaks
+png("exp-peaks-vs-input-genes.png")
+plotMA(peak.data$gene.counts.nopeaks)
+dev.off()
+png("exp-peaks-vs-input-peaks.png")
+plotMA(peak.data$peak.counts)
+dev.off()
+sessionInfo()
+
+
+
+

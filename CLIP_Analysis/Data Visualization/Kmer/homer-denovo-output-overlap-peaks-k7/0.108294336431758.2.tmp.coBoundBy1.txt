@@ -1,0 +1,3 @@
+#Name (cmd = mergePeaks Kmer/homer-denovo-output-overlap-peaks-k7/bg.clean.pos Kmer/homer-denovo-output-overlap-peaks-k7/target.clean..pos -d given -cobound 1 -prefix Kmer/homer-denovo-output-overlap-peaks-k7/0.108294336431758.2.tmp)	chr	start	end	strand	stat	stat2	Kmer/homer-denovo-output-overlap-peaks-k7/target.clean..pos
+BG1-Dup5081	chrM	13055	13069	+	0.000	0.000	1-Dup1314
+BG1-Dup5090	chrM	12949	12963	-	0.000	0.000	1-Dup1310

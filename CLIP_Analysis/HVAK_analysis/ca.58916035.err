@@ -1,0 +1,251 @@
+
+Attaching package: ‘dplyr’
+
+The following objects are masked from ‘package:plyr’:
+
+    arrange, count, desc, failwith, id, mutate, rename, summarise,
+    summarize
+
+The following objects are masked from ‘package:data.table’:
+
+    between, first, last
+
+The following objects are masked from ‘package:stats’:
+
+    filter, lag
+
+The following objects are masked from ‘package:base’:
+
+    intersect, setdiff, setequal, union
+
+Loading required package: methods
+Loading required package: GenomicRanges
+Loading required package: stats4
+Loading required package: BiocGenerics
+Loading required package: parallel
+
+Attaching package: ‘BiocGenerics’
+
+The following objects are masked from ‘package:parallel’:
+
+    clusterApply, clusterApplyLB, clusterCall, clusterEvalQ,
+    clusterExport, clusterMap, parApply, parCapply, parLapply,
+    parLapplyLB, parRapply, parSapply, parSapplyLB
+
+The following objects are masked from ‘package:dplyr’:
+
+    combine, intersect, setdiff, union
+
+The following objects are masked from ‘package:stats’:
+
+    IQR, mad, sd, var, xtabs
+
+The following objects are masked from ‘package:base’:
+
+    anyDuplicated, append, as.data.frame, cbind, colMeans, colnames,
+    colSums, do.call, duplicated, eval, evalq, Filter, Find, get, grep,
+    grepl, intersect, is.unsorted, lapply, lengths, Map, mapply, match,
+    mget, order, paste, pmax, pmax.int, pmin, pmin.int, Position, rank,
+    rbind, Reduce, rowMeans, rownames, rowSums, sapply, setdiff, sort,
+    table, tapply, union, unique, unsplit, which, which.max, which.min
+
+Loading required package: S4Vectors
+
+Attaching package: ‘S4Vectors’
+
+The following objects are masked from ‘package:dplyr’:
+
+    first, rename
+
+The following object is masked from ‘package:plyr’:
+
+    rename
+
+The following objects are masked from ‘package:data.table’:
+
+    first, second
+
+The following object is masked from ‘package:base’:
+
+    expand.grid
+
+Loading required package: IRanges
+
+Attaching package: ‘IRanges’
+
+The following objects are masked from ‘package:dplyr’:
+
+    collapse, desc, slice
+
+The following object is masked from ‘package:plyr’:
+
+    desc
+
+The following object is masked from ‘package:data.table’:
+
+    shift
+
+Loading required package: GenomeInfoDb
+Loading required package: SummarizedExperiment
+Loading required package: Biobase
+Welcome to Bioconductor
+
+    Vignettes contain introductory material; view with
+    'browseVignettes()'. To cite Bioconductor, see
+    'citation("Biobase")', and for packages 'citation("pkgname")'.
+
+Loading required package: DelayedArray
+Loading required package: matrixStats
+
+Attaching package: ‘matrixStats’
+
+The following objects are masked from ‘package:Biobase’:
+
+    anyMissing, rowMedians
+
+The following object is masked from ‘package:dplyr’:
+
+    count
+
+The following object is masked from ‘package:plyr’:
+
+    count
+
+
+Attaching package: ‘DelayedArray’
+
+The following objects are masked from ‘package:matrixStats’:
+
+    colMaxs, colMins, colRanges, rowMaxs, rowMins, rowRanges
+
+The following object is masked from ‘package:base’:
+
+    apply
+
+Loading required package: GenomicFeatures
+Loading required package: AnnotationDbi
+
+Attaching package: ‘AnnotationDbi’
+
+The following object is masked from ‘package:dplyr’:
+
+    select
+
+Loading required package: GenomicAlignments
+Loading required package: Biostrings
+Loading required package: XVector
+
+Attaching package: ‘XVector’
+
+The following object is masked from ‘package:plyr’:
+
+    compact
+
+
+Attaching package: ‘Biostrings’
+
+The following object is masked from ‘package:DelayedArray’:
+
+    type
+
+The following object is masked from ‘package:base’:
+
+    strsplit
+
+Loading required package: Rsamtools
+
+Attaching package: ‘GenomicAlignments’
+
+The following object is masked from ‘package:dplyr’:
+
+    last
+
+The following object is masked from ‘package:data.table’:
+
+    last
+
+Warning messages:
+1: replacing previous import ‘GenomicRanges::shift’ by ‘data.table::shift’ when loading ‘CLIPanalyze’ 
+2: replacing previous import ‘GenomicAlignments::second’ by ‘data.table::second’ when loading ‘CLIPanalyze’ 
+3: replacing previous import ‘GenomicAlignments::last’ by ‘data.table::last’ when loading ‘CLIPanalyze’ 
+4: replacing previous import ‘GenomicAlignments::first’ by ‘data.table::first’ when loading ‘CLIPanalyze’ 
+5: replacing previous import ‘data.table::last’ by ‘dplyr::last’ when loading ‘CLIPanalyze’ 
+6: replacing previous import ‘GenomicRanges::union’ by ‘dplyr::union’ when loading ‘CLIPanalyze’ 
+7: replacing previous import ‘GenomicRanges::intersect’ by ‘dplyr::intersect’ when loading ‘CLIPanalyze’ 
+8: replacing previous import ‘GenomicRanges::setdiff’ by ‘dplyr::setdiff’ when loading ‘CLIPanalyze’ 
+9: replacing previous import ‘data.table::first’ by ‘dplyr::first’ when loading ‘CLIPanalyze’ 
+10: replacing previous import ‘data.table::between’ by ‘dplyr::between’ when loading ‘CLIPanalyze’ 
+use only these BAM files for peak identification:
+Exp-HVAK1_LIB041590_GEN00154980_R1_barcode.uniq.bam Exp-HVAK2_LIB041590_GEN00154983_R1_barcode.uniq.bam Exp-HVAK3_LIB041590_GEN00154986_R1_barcode.uniq.bam Exp-HVAK4_LIB043893_GEN00166448_R1_barcode.uniq.bam Exp-HVAK5_LIB043893_GEN00166451_R1_barcode.uniq.bam Exp-HVAK6_LIB043893_GEN00166454_R1_barcode.uniq.bam
+Identifying peaks...
+===Y===
+===MT===
+===X===
+===18===
+===14===
+===12===
+===16===
+===19===
+===13===
+===15===
+===17===
+===8===
+===10===
+===3===
+===6===
+===9===
+===7===
+===5===
+===4===
+===1===
+===2===
+===11===
+identified 130374 peaks
+transform chromosome names to UCSC format
+prepare transcript and gene names... 
+'select()' returned 1:1 mapping between keys and columns
+annotate with exons... 
+annotate with introns... 
+annotate with 5'UTRs... 
+annotate as utr5* if 2000 upstream of 5'UTRs... 
+annotate with 3'UTRs... 
+annotate as utr3* if 2000 downstream of 3'UTRs... 
+annotate with intergenic... 
+annotate with miRNAs... 
+prioritize annotations in this order: utr3, utr3*, utr5, utr5*, exon, intron ...
+exclude from analysis peaks overlapping miRNAs
+count reads in peaks...
+transform chromosome names of peaks for counting
+count reads in genes...
+load annotations
+extract gene info
+count reads over the whole gene body
+transform chromosome names of genes for counting
+count reads in genes and peaks together
+extract counts in genes excluding peaks
+estimate size factors
+run differential coverage analysis...
+assign condition factor
+using pre-existing size factors
+estimating dispersions
+gene-wise dispersion estimates
+mean-dispersion relationship
+final dispersion estimates
+fitting model and testing
+using pre-existing size factors
+estimating dispersions
+gene-wise dispersion estimates
+mean-dispersion relationship
+final dispersion estimates
+fitting model and testing
+summary for BH correction:
+add/update columns padj and log2FC in peaks
+Warning message:
+call dbDisconnect() when finished working with a connection 
+Warning message:
+In int_abline(a = a, b = b, h = h, v = v, untf = untf, ...) :
+  semi-transparency is not supported on this device: reported only once per page
+Warning message:
+In int_abline(a = a, b = b, h = h, v = v, untf = untf, ...) :
+  semi-transparency is not supported on this device: reported only once per page
+Connection to compute-e-16-189.o2.rc.hms.harvard.edu closed by remote host.
