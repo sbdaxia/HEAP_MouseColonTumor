@@ -23,6 +23,7 @@ library(VennDiagram)
 library(ggplot2)
 library(biomaRt)
 library(RColorBrewer)
+library(plotly)
 ```
 
 ## Load RNA-Seq data
@@ -83,7 +84,7 @@ colnames(zscores.all)[3] <- "N"
 ```
 
 ```{r}
-ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+p_rna <- ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N, label = miR.family)) +
   geom_point(colour = "#EC469A", alpha = 0.6) +
   xlab("RNA-Seq Z-score") +
   ylab("miRNA family abundance") +
@@ -100,6 +101,8 @@ ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
       axis.ticks.x = element_line(size = 0.5),
       axis.ticks.y = element_line(size = 0.5),
       plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+ggplotly(p_rna)
 
 pdf("PDF_figure/CDF_zscore_merged/RNA_CDF_zscore.pdf",
     height = 4,
@@ -161,7 +164,7 @@ colnames(zscores.all)[3] <- "N"
 ```
 
 ```{r}
-ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
+p_protein <- ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N, label = miR.family)) +
   geom_point(colour = "#1C75BB", alpha = 0.6) +
   xlab("Proteomics Z-score") +
   ylab("miRNA family abundance") +
@@ -178,6 +181,8 @@ ggplot(zscores.all, aes(x = z.score, y = log2(baseMean), size = N)) +
       axis.ticks.x = element_line(size = 0.5),
       axis.ticks.y = element_line(size = 0.5),
       plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+ggplotly(p_protein)
 
 pdf("PDF_figure/CDF_zscore_merged/Protein_CDF_zscore.pdf",
     height = 4,
