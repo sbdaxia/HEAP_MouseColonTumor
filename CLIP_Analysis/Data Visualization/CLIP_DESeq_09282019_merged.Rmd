@@ -490,6 +490,67 @@ for (i in 1:10){
   print(p)
 }
 dev.off()
+
+# Plot all peak density
+ggplot(df, aes(x = hvak.hva.log2FC, y = hvak.hva.logP)) +
+  geom_hex(bins = 40, color = "white", aes(fill = stat(log2(count)))) +
+  scale_fill_viridis_c() +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+    xlab("Fold change log2 (HVAK / HVA)") +
+    ylab("-log10(FDR)") +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
+    #guides(fill = guide_legend(title = "miRNA family")) +
+    ggtitle("All peaks")
+
+# Number of peaks with LFC on either side
+# LFC > 0
+LFC <- df$hvak.hva.log2FC[!is.na(df$hvak.hva.log2FC)]
+sum(LFC > 0)
+sum(LFC > 0)/length(LFC) * 100
+
+
+# LFC < 0
+sum(LFC < 0)
+sum(LFC < 0)/length(LFC) * 100
+
+pdf("PDF_figure/CLIP_DESeq_09282019_merged/VolcanoPlot_all_peaks.pdf",
+    width = 5,
+    height = 4)
+# Plot density of peak points on teh volcano plot
+ggplot(df, aes(x = hvak.hva.log2FC, y = hvak.hva.logP)) +
+  geom_hex(bins = 40, color = "white", aes(fill = stat(log2(count)))) +
+  scale_fill_viridis_c() +
+  geom_vline(xintercept = 0, linetype = "dashed", size = 0.3) +
+    xlab("Fold change log2 (HVAK / HVA)") +
+    ylab("-log10(FDR)") +
+    theme_bw() +
+    theme(panel.border = element_blank(),
+      panel.background = element_blank(),
+      panel.grid.major = element_blank(), 
+      panel.grid.minor = element_blank(),
+      axis.title.x = element_text(size=12, margin = margin(t = 10)),
+      axis.title.y = element_text(size=12, margin = margin(r = 10)),
+      axis.text = element_text(size=10),
+      axis.line.y = element_line(size = 0.5),
+      axis.line.x = element_line(size = 0.5),
+      axis.ticks.x = element_line(size = 0),
+      axis.ticks.y = element_line(size = 0.5),
+      plot.title = element_text(hjust = 0.5, size = 12, face = "bold")) +
+    #guides(fill = guide_legend(title = "miRNA family")) +
+    ggtitle("All peaks")
+dev.off()
 ```
 
 I just want a table of all top 40 miRNAs and the number of peaks that are associated with them with LFC (HVAK/HVA) > 0 and < 0.
